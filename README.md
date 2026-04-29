@@ -3,414 +3,198 @@
 CRUDFactory is a Django REST Framework library that generates typed CRUD APIs
 from Django models and Python dataclasses.
 
-It is built for this kind of setup:
+It is designed to reduce repetitive DRF CRUD boilerplate while keeping the API
+contract explicit and typed.
+
+The library is a good fit when you want:
+
+- typed request DTOs
+- typed response DTOs
+- less serializer and viewset boilerplate
+- optional filtering, ordering, stats, custom actions, and ACL wiring
+- the ability to stay minimal for simple resources and go explicit for complex ones
+
+This README is the short project overview. The full documentation lives in the
+GitHub wiki, with `Home.md` as the main manual.
+
+## Index
+
+- [What The Project Is](#what-the-project-is)
+- [Installation](#installation)
+- [Django Setup](#django-setup)
+- [Quick Example](#quick-example)
+- [What CRUDFactory Can Generate](#what-crudfactory-can-generate)
+- [Built-In ACL Support](#built-in-acl-support)
+- [How To Read The Full Docs](#how-to-read-the-full-docs)
+
+## What The Project Is
+
+CRUDFactory is a productivity layer on top of Django REST Framework.
+
+You describe an API resource with:
+
+- a Django model
+- request dataclasses
+- a response dataclass or response mapper
+- optional field metadata
+
+and CRUDFactory generates the repetitive pieces around that contract.
+
+At its simplest, it is built for this kind of setup:
 
 ```python
 factory = CRUDFactory(
     model=InventoryItem,
-    write_input=ItemWriteFields,
+    create_input=ItemCreateDTO,
+    update_input=ItemUpdateDTO,
+    partial_update_input=ItemPatchDTO,
 )
 ```
 
-From that one declaration, CRUDFactory can generate:
-
-- CRUD routes
-- request validation
-- automatic simple writes
-- automatic response DTOs
-- filtering and ordering
-- nested response shapes
-- aggregate stats
-- typed custom actions
-- OpenAPI schema metadata
-- generated Markdown docs
-- ACL integration
-
-## Index
-
-- [What This Library Does](#what-this-library-does)
-- [Who This Is For](#who-this-is-for)
-- [Installation](#installation)
-- [The Mental Model](#the-mental-model)
-- [The Fastest Working Example](#the-fastest-working-example)
-- [The Grouped Metadata API](#the-grouped-metadata-api)
-- [Automatic CRUD Modes](#automatic-crud-modes)
-- [When To Use Explicit Configuration](#when-to-use-explicit-configuration)
-- [Responses And Errors](#responses-and-errors)
-- [ACL](#acl)
-- [Generated Docs](#generated-docs)
-- [Project Layout Recommendation](#project-layout-recommendation)
-- [Learning Path](#learning-path)
-- [Wiki Pages](#wiki-pages)
-
-## What This Library Does
-
-CRUDFactory reduces the repetitive part of building DRF APIs.
-
-Instead of hand-writing:
-
-- serializers
-- viewsets
-- list/detail/create/update/patch/delete methods
-- field validation glue
-- filter and ordering plumbing
-
-you describe the contract using dataclasses and let the library generate the
-rest.
-
-It does not replace Django models.
-
-It does not try to hide DRF entirely.
-
-It simply removes the most repetitive API boilerplate while keeping the
-contracts explicit and typed.
-
-## Who This Is For
-
-CRUDFactory is useful when:
-
-- you already use Django and DRF
-- you want less CRUD boilerplate
-- you want typed request and response contracts
-- you still want the option to drop to explicit logic for complex resources
-
-It is especially useful when a codebase has many endpoints that are mostly:
-
-- one model
-- one response contract
-- standard CRUD operations
-
 ## Installation
 
-Runtime install:
+Editable install from this repository:
 
 ```bash
 pip install -e .
 ```
 
-If you want OpenAPI schema generation with `drf-spectacular`:
+If you want OpenAPI schema support too:
 
 ```bash
 pip install -e ".[schema]"
 ```
 
-## The Mental Model
+You can also bootstrap a local virtual environment with the included scripts.
 
-CRUDFactory works like this:
+Unix or macOS:
 
-```text
-request JSON
-  -> generated DRF serializer
-  -> request dataclass
-  -> generated simple write or explicit handler
-  -> Django model instance
-  -> generated or explicit response dataclass
-  -> response JSON
+```bash
+bash scripts/setup_venv.sh
 ```
 
-The key idea is:
+Windows:
 
-- request dataclasses define what clients may send
-- response dataclasses define what clients receive
-- metadata on those dataclass fields defines validation, mapping, filtering, ordering, and stats
+```bat
+scripts\setup_venv.bat
+```
 
-## The Fastest Working Example
+## Django Setup
 
-### 1. Django model
+If you only want CRUD generation, install the package and import it in your
+app code.
+
+If you want the built-in ACL system too, add `crudfactory` to
+`INSTALLED_APPS`:
 
 ```python
-from django.db import models
-
-
-class InventoryItem(models.Model):
-    name = models.CharField(max_length=80)
-    quantity = models.IntegerField(default=0)
+INSTALLED_APPS = [
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "rest_framework",
+    "crudfactory",
+]
 ```
 
-### 2. One dataclass for writable fields
+Recommended ACL settings:
+
+```python
+CRUDFACTORY = {
+    "ACL_ENABLED": True,
+    "ACL_AUTO_CREATE_TABLES": False,
+}
+```
+
+Then run:
+
+```bash
+python -m django migrate
+```
+
+## Quick Example
 
 ```python
 from dataclasses import dataclass, field
 
-from crudfactory import RequestConstraints
+from crudfactory import CRUDFactory, length, range_, regex
 
 
 @dataclass
-class ItemWriteFields:
-    name: str = field(
-        metadata=RequestConstraints.regex(r"^[A-Za-z0-9 -]+$").length(min=2, max=80)
-    )
-    quantity: int = field(metadata=RequestConstraints.range(min=0, max=500))
-```
-
-### 3. Factory declaration
-
-```python
-from crudfactory import CRUDFactory
-
-
-item_factory = CRUDFactory(
-    model=InventoryItem,
-    write_input=ItemWriteFields,
-    route="items",
-    basename="item",
-    app_name="inventory",
-)
-```
-
-### 4. Mount in Django `urls.py`
-
-```python
-from .api import item_factory
-
-app_name = item_factory.app_name
-urlpatterns = item_factory.get_urlpatterns()
-```
-
-This gives you:
-
-- `GET /items/`
-- `GET /items/{id}/`
-- `POST /items/`
-- `PUT /items/{id}/`
-- `PATCH /items/{id}/`
-- `DELETE /items/{id}/`
-
-## The Grouped Metadata API
-
-The recommended style is to use grouped helper classes instead of importing a
-long list of standalone helpers.
-
-Use:
-
-- `RequestConstraints`
-- `RequestFilter`
-- `RequestMapping`
-- `ResponseField`
-- `ResponseStats`
-
-Example:
-
-```python
-from dataclasses import dataclass, field
-
-from crudfactory import RequestConstraints, RequestFilter, RequestMapping
+class ItemCreateDTO:
+    name: str = field(metadata={**regex(r"^[A-Za-z ]+$"), **length(min=2, max=80)})
+    quantity: int = field(metadata=range_(min=0, max=500))
 
 
 @dataclass
-class ItemWriteFields:
-    public_name: str = field(
-        metadata=RequestMapping.model_field("name")
-        .regex(r"^[A-Za-z0-9 -]+$")
-        .length(min=2, max=80)
-    )
-    quantity: int = field(metadata=RequestConstraints.range(min=0, max=500))
+class ItemUpdateDTO:
+    name: str = field(metadata={**regex(r"^[A-Za-z ]+$"), **length(min=2, max=80)})
+    quantity: int = field(metadata=range_(min=0, max=500))
 
 
 @dataclass
-class ItemResponseDTO:
-    id: int
-    public_name: str = field(
-        metadata=RequestMapping.model_field("name")
-        .filterable(lookups=("exact", "icontains"))
-        .orderable()
+class ItemPatchDTO:
+    name: str | None = field(
+        default=None,
+        metadata={**regex(r"^[A-Za-z ]+$"), **length(min=2, max=80)},
     )
-    quantity: int = field(metadata=RequestFilter.filterable().orderable())
-```
+    quantity: int | None = field(default=None, metadata=range_(min=0, max=500))
 
-This style is better for autocomplete and keeps imports readable.
 
-## Automatic CRUD Modes
-
-CRUDFactory supports several levels of automation.
-
-### Minimal mode
-
-```python
 factory = CRUDFactory(
     model=InventoryItem,
-    write_input=ItemWriteFields,
+    create_input=ItemCreateDTO,
+    update_input=ItemUpdateDTO,
+    partial_update_input=ItemPatchDTO,
 )
 ```
 
-This derives:
+That gives you the normal CRUD routes plus generated validation and simple
+single-model writes.
 
-- create input
-- update input
-- patch input
-- generated simple write handlers
-- generated response DTO
+## What CRUDFactory Can Generate
 
-### Create-only plus writable fields
+Depending on how much configuration you provide, CRUDFactory can generate:
+
+- CRUD routes
+- request validation from dataclass metadata
+- automatic simple writes
+- automatic or explicit response DTO output
+- filtering and ordering
+- aggregate stats
+- typed custom actions
+- OpenAPI schema integration
+- Markdown factory docs
+- ACL-aware queryset and object checks
+
+## Built-In ACL Support
+
+ACL is optional.
+
+If you use the built-in ACL system, CRUDFactory ships:
+
+- ACL Django models
+- a Django-backed ACL backend
+- bootstrap helpers
+- management commands
+- automatic integration points for generated CRUD endpoints
+
+If you do not want ACL, disable it in settings:
 
 ```python
-factory = CRUDFactory(
-    model=Chargepoint,
-    create_only_input=ChargepointCreateOnlyFields,
-    write_input=ChargepointMutableFields,
-)
-```
-
-This is useful when create accepts fields that update should not expose.
-
-### Explicit response contract
-
-```python
-factory = CRUDFactory(
-    model=Connector,
-    write_input=ConnectorWriteFields,
-    response_dataclass=ConnectorResponseDTO,
-)
-```
-
-Use this when the response shape differs from the writable fields.
-
-## When To Use Explicit Configuration
-
-Stay in minimal mode when:
-
-- one endpoint maps cleanly to one model
-- the API field names match the model field names
-- the response can be derived from the same fields
-- the write only touches one model
-
-Move to explicit config when:
-
-- create requires different fields than update
-- response shape differs from request shape
-- response includes related models
-- response includes child collections
-- response includes aggregate stats
-- writes touch multiple models
-- ACL or custom actions are involved
-
-## Responses And Errors
-
-Successful responses use your response DTO shape.
-
-Error responses do not.
-
-They use normal DRF-style error payloads.
-
-### Validation error example
-
-```json
-{
-  "name": ["Ensure this field has at least 2 characters."]
+CRUDFACTORY = {
+    "ACL_ENABLED": False,
+    "ACL_AUTO_CREATE_TABLES": False,
 }
 ```
 
-### Not found example
+## How To Read The Full Docs
 
-```json
-{
-  "detail": "Not found."
-}
-```
+Use the wiki as the canonical documentation set.
 
-This matters for frontend work:
+Start with:
 
-- success payloads are DTO-shaped
-- error payloads are DRF-shaped
+- `Home.md` in the wiki for the full manual
+- `CRUDFactory.md` for the main class reference
+- the helper reference pages for validation, filtering, mapping, stats, custom actions, pagination, and ACL
 
-## ACL
-
-CRUDFactory supports ACL integration through `crud_acl(...)` and the Django
-ACL backend shipped in this repository.
-
-Typical pattern:
-
-```python
-from crudfactory import ACLResourceRef, DjangoACLBackend, crud_acl
-
-
-connector_acl = crud_acl(
-    backend=DjangoACLBackend(),
-    permission_prefix="app.connector",
-    resource_ref_from_instance=lambda connector: ACLResourceRef(
-        "connector",
-        f"{connector.chargepoint.serial_number}/{connector.name}",
-    ),
-)
-```
-
-Use ACL when:
-
-- list responses must be filtered by access
-- detail routes must enforce resource-level visibility
-- custom actions must require resource-specific permissions
-
-## Generated Docs
-
-CRUDFactory can expose documentation in two ways:
-
-### OpenAPI schema
-
-If `drf-spectacular` is installed and configured.
-
-### Markdown
-
-Each factory can render Markdown docs from its own contract:
-
-```python
-markdown = factory.render_markdown_docs(
-    title="Connector CRUD Factory",
-    base_path="/api",
-)
-```
-
-The demo Django app also serves generated factory docs directly.
-
-## Project Layout Recommendation
-
-The cleanest structure is one file per factory.
-
-Recommended pattern:
-
-```text
-your_app/
-  models.py
-  urls.py
-  factories/
-    location_factory.py
-    chargepoint_factory.py
-    connector_factory.py
-```
-
-Each factory file should contain:
-
-- its request dataclasses
-- its response dataclasses
-- its queryset plan
-- its ACL and custom action wiring
-- the `CRUDFactory(...)` declaration
-
-This keeps resources easy to move and easy to read.
-
-## Learning Path
-
-If you are new to this library, learn it in this order:
-
-1. build one simple CRUD resource with `write_input`
-2. add `RequestConstraints`
-3. add `RequestFilter`
-4. add `ResponseField`
-5. add `ResponseStats`
-6. add custom actions
-7. add ACL
-
-## Wiki Pages
-
-This repository now includes a `wiki/` folder with GitHub-friendly pages:
-
-- [Home](wiki/Home.md)
-- [CRUDFactory](wiki/CRUDFactory.md)
-- [ACLBackend](wiki/ACLBackend.md)
-- [ACLActionConfig](wiki/ACLActionConfig.md)
-- [ACLConfig](wiki/ACLConfig.md)
-- [ACLResourceRef](wiki/ACLResourceRef.md)
-- [DjangoACLBackend](wiki/DjangoACLBackend.md)
-- [DjangoACLService](wiki/DjangoACLService.md)
-
-The wiki is now the main docs surface. Start with [Home](wiki/Home.md), then
-use the per-class pages when you need exact reference details.
+The README is intentionally shorter than the wiki and should stay that way.
