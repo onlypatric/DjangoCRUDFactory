@@ -3,101 +3,67 @@
 CRUDFactory is a Django REST Framework library that generates typed CRUD APIs
 from Django models and Python dataclasses.
 
-This page is the main reference page for the library. It is written to be
-useful even if you have little or no prior experience with Django REST
-Framework.
-
----
+This page is the main documentation page for the library. It is written for
+people who may be new to Django, new to DRF, or simply new to this library.
 
 ## Index
 
-- [What CRUDFactory Is](#what-crudfactory-is)
-- [Why This Library Exists](#why-this-library-exists)
-- [How To Install The Library](#how-to-install-the-library)
-- [How To Configure Django](#how-to-configure-django)
-- [How ACL Configuration Works](#how-acl-configuration-works)
-- [Core Idea](#core-idea)
-- [What A Type Is In CRUDFactory](#what-a-type-is-in-crudfactory)
-- [Why There Are Different Types For Create Update And Patch](#why-there-are-different-types-for-create-update-and-patch)
-- [The Main Kinds Of Types](#the-main-kinds-of-types)
-- [The Shortest Working Setup](#the-shortest-working-setup)
-- [The Most Important CRUDFactory Parameters](#the-most-important-crudfactory-parameters)
-- [How Automatic CRUD Works](#how-automatic-crud-works)
-- [When Minimal Mode Is Enough](#when-minimal-mode-is-enough)
-- [When You Need Explicit Types](#when-you-need-explicit-types)
-- [The Metadata System](#the-metadata-system)
-- [RequestConstraints](#requestconstraints)
-- [RequestFilter](#requestfilter)
-- [RequestMapping](#requestmapping)
-- [ResponseField](#responsefield)
-- [ResponseStats](#responsestats)
-- [How To Create Request Types](#how-to-create-request-types)
-- [How To Create Response Types](#how-to-create-response-types)
-- [How To Map A Type Field To A Different Model Column](#how-to-map-a-type-field-to-a-different-model-column)
+- [What This Library Does](#what-this-library-does)
+- [How To Install It](#how-to-install-it)
+- [How To Add It To Django](#how-to-add-it-to-django)
+- [The Built-In ACL System](#the-built-in-acl-system)
+- [The Core Mental Model](#the-core-mental-model)
+- [What A DTO Is](#what-a-dto-is)
+- [Why Create Update And Patch Often Need Different DTOs](#why-create-update-and-patch-often-need-different-dtos)
+- [The Shortest Working Factory](#the-shortest-working-factory)
+- [When The Minimal Style Is Enough](#when-the-minimal-style-is-enough)
+- [When You Should Use Explicit Handlers](#when-you-should-use-explicit-handlers)
+- [How Request DTO Validation Works](#how-request-dto-validation-works)
+- [How Response DTOs Work](#how-response-dtos-work)
 - [How Filtering And Ordering Work](#how-filtering-and-ordering-work)
+- [How Field Mapping Works](#how-field-mapping-works)
 - [How Aggregate Stats Work](#how-aggregate-stats-work)
-- [How Nested Responses Work](#how-nested-responses-work)
 - [How Custom Actions Work](#how-custom-actions-work)
-- [How ACL Works](#how-acl-works)
-- [How Errors Look](#how-errors-look)
+- [How ACL Integration Works](#how-acl-integration-works)
 - [How Pagination Works](#how-pagination-works)
-- [How Docs Generation Works](#how-docs-generation-works)
-- [Recommended Project Structure](#recommended-project-structure)
+- [How Error Responses Look](#how-error-responses-look)
+- [Important CRUDFactory Parameters](#important-crudfactory-parameters)
 - [A Complete Example](#a-complete-example)
-- [What To Read Next](#what-to-read-next)
+- [Reference Pages](#reference-pages)
 
----
+## What This Library Does
 
-## What CRUDFactory Is
+CRUDFactory helps you avoid repeating the same DRF code for every resource.
 
-CRUDFactory is a library you use inside a normal Django app.
+Without a helper like this, a normal CRUD endpoint often needs:
 
-It helps you generate REST API endpoints from:
+- one serializer for create
+- one serializer for update
+- one serializer for patch
+- one serializer for the response
+- one viewset
+- manual filter and ordering wiring
+- manual response shaping
+- optional ACL wiring
+
+CRUDFactory lets you describe most of that through:
 
 - a Django model
-- one or more Python dataclasses
-- optional metadata attached to dataclass fields
+- request dataclasses
+- a response dataclass or response mapper
+- field metadata
 
-Instead of writing many serializers, viewsets, filter backends, and response
-mapping functions by hand for every resource, you declare the API contract in a
-small number of structured Python types.
+It then generates the DRF viewset, router helpers, filtering, ordering,
+validation, response rendering, optional ACL checks, and optional custom
+actions.
 
-## Why This Library Exists
+## How To Install It
 
-In many Django backends, CRUD endpoints repeat the same work:
-
-- define a serializer for create
-- define a serializer for update
-- define a serializer for patch
-- define a serializer for the response
-- define a ViewSet
-- wire list, retrieve, create, update, patch, delete
-- re-add validation and filtering rules
-
-That is a lot of boilerplate when the endpoint is mostly straightforward.
-
-CRUDFactory exists to reduce that repetition while keeping the API explicit and
-typed.
-
-## How To Install The Library
-
-If you are new to Python packaging, the simplest mental model is this:
-
-- the library code lives in this repository
-- your Django project needs that code installed into its Python environment
-
-The normal install command is:
+If this repository is on your machine and you want to use it directly:
 
 ```bash
 pip install -e .
 ```
-
-What that means:
-
-- `pip` installs the package into your environment
-- `-e` means “editable install”
-- editable means changes you make in this repository are immediately reflected
-  in the environment without reinstalling every time
 
 If you want OpenAPI schema support too:
 
@@ -105,10 +71,13 @@ If you want OpenAPI schema support too:
 pip install -e ".[schema]"
 ```
 
-If you cloned the repository and want the local development environment first,
-you can also use the helper scripts:
+The `-e` flag means editable install. That is useful during development because
+changes in the repository are immediately visible to the Python environment.
 
-Unix/macOS:
+If you want the project virtual environment set up for you, use the helper
+scripts shipped in the repository.
+
+Unix or macOS:
 
 ```bash
 bash scripts/setup_venv.sh
@@ -120,26 +89,20 @@ Windows:
 scripts\setup_venv.bat
 ```
 
-Those scripts create a virtual environment and install the package in editable
-mode.
+## How To Add It To Django
 
-## How To Configure Django
+CRUDFactory can be used in two broad ways.
 
-There are two common ways to use CRUDFactory.
+### 1. CRUD generation only
 
-### Mode 1: CRUDFactory without the built-in ACL system
+If you only want the generated CRUD endpoints and do not want to use the
+built-in ACL models or management commands, you can install the package and
+import from it in your app code without relying on its Django app models.
 
-In this mode, CRUDFactory is just a library for typed CRUD generation.
+### 2. CRUD generation plus the built-in ACL system
 
-You install it and import it in your Django app, but you do not need the
-library’s database tables.
-
-### Mode 2: CRUDFactory with the built-in ACL system
-
-In this mode, you use the ACL tables, ACL service, ACL backend, bootstrap
-helpers, and management commands provided by the library.
-
-If you want the built-in ACL system, add `crudfactory` to `INSTALLED_APPS`:
+If you want to use the built-in ACL backend, Django models, bootstrap helpers,
+and management commands, add `crudfactory` to `INSTALLED_APPS`:
 
 ```python
 INSTALLED_APPS = [
@@ -150,7 +113,7 @@ INSTALLED_APPS = [
 ]
 ```
 
-If you also want OpenAPI docs:
+If you also want schema generation through `drf-spectacular`:
 
 ```python
 INSTALLED_APPS = [
@@ -160,37 +123,23 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "crudfactory",
 ]
-```
 
-And:
-
-```python
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 ```
 
-## How ACL Configuration Works
+## The Built-In ACL System
 
-CRUDFactory was designed with this ACL system in mind, but the ACL layer is
-still optional.
+CRUDFactory was designed with this ACL model in mind, but ACL is optional.
 
-You can use CRUDFactory with no ACL at all.
+You can:
 
-You can also use CRUDFactory with a different ACL system if you implement the
-expected backend protocol.
+- ignore ACL completely
+- use the built-in ACL system
+- provide your own backend that satisfies the `ACLBackend` protocol
 
-### Default behavior
-
-If you add `crudfactory` to `INSTALLED_APPS` and run migrations normally, the
-ACL models and commands are available.
-
-### Optional startup settings
-
-CRUDFactory now supports Django settings for ACL operativity and automatic ACL
-table creation.
-
-Recommended setting style:
+The main settings are:
 
 ```python
 CRUDFACTORY = {
@@ -202,15 +151,12 @@ CRUDFACTORY = {
 Meaning:
 
 - `ACL_ENABLED`
-  Turns the built-in Django ACL backend behavior on or off.
+  Enables or disables the built-in Django ACL backend behavior.
 
 - `ACL_AUTO_CREATE_TABLES`
-  If `True`, CRUDFactory will create any missing ACL tables at Django startup
-  when the app is loaded.
+  If `True`, CRUDFactory tries to create missing ACL tables when Django starts.
 
-### Recommended values
-
-For most real projects:
+Recommended production-style setup:
 
 ```python
 CRUDFACTORY = {
@@ -219,30 +165,13 @@ CRUDFACTORY = {
 }
 ```
 
-Then use normal Django migrations:
+Then run normal Django migrations:
 
 ```bash
 python -m django migrate
 ```
 
-### When automatic table creation helps
-
-Automatic ACL table creation is useful when:
-
-- a developer wants the ACL tables available immediately in a local environment
-- a quick prototype should work without remembering to run ACL migrations first
-- a project wants the built-in ACL system to be more plug-and-play
-
-### Important caution
-
-Automatic table creation is a convenience feature.
-
-For production systems, normal migrations are still the better default because
-they are explicit, reviewable, and predictable.
-
-### If you do not want ACL at all
-
-Set:
+If you do not want ACL at all:
 
 ```python
 CRUDFACTORY = {
@@ -251,532 +180,102 @@ CRUDFACTORY = {
 }
 ```
 
-In that case:
+The automatic table creation feature exists to make local development and quick
+prototypes easier. It should be treated as a convenience feature, not as the
+default production deployment strategy.
 
-- the built-in Django ACL backend will behave as disabled
-- ACL table auto-creation will not run
-- you can still use the normal CRUD generation parts of the library
+## The Core Mental Model
 
-## Core Idea
+CRUDFactory expects you to think about an API resource in a few separate parts:
 
-CRUDFactory works like this:
+- the Django model that stores the data
+- the request DTOs that describe what clients are allowed to send
+- the response DTO that describes what clients receive
+- optional metadata on DTO fields
+- optional ACL rules
+- optional custom actions
 
-```text
-request JSON
-  -> generated DRF serializer
-  -> request dataclass instance
-  -> generated write logic or explicit handler
-  -> Django model instance
-  -> generated or explicit response dataclass
-  -> JSON response
-```
+The key idea is that your API contract should be explicit and typed, even when
+the amount of boilerplate is reduced.
 
-The important part is:
+## What A DTO Is
 
-- request dataclasses define input
-- response dataclasses define output
-- metadata defines validation, mapping, filtering, ordering, stats, and more
+`DTO` stands for `Data Transfer Object`.
 
-## What A Type Is In CRUDFactory
+In this library, a DTO is simply a Python `@dataclass` used as a contract for
+API data.
 
-When we say “type” in CRUDFactory, we usually mean a Python dataclass used as a
-contract.
+There are two main kinds:
 
-Example:
+- request DTOs
+  These describe incoming request bodies such as create, update, and patch.
 
-```python
-from dataclasses import dataclass
+- response DTOs
+  These describe the JSON shape returned on successful responses.
 
+Why this matters:
 
-@dataclass
-class ItemWriteFields:
-    name: str
-    quantity: int
-```
+- your Django model describes database structure
+- your DTO describes API structure
 
-This dataclass is a type.
+Those two things are often similar, but they are not always the same. You may
+want different field names, a narrower public contract, validation rules, or a
+response assembled from multiple related models.
 
-It tells CRUDFactory:
+## Why Create Update And Patch Often Need Different DTOs
 
-- which fields exist
-- what their Python types are
-- and, if metadata is attached, what rules apply to them
+These three actions often have different semantics:
 
-In practice, types in CRUDFactory are used for:
+- `create`
+  A client is creating a new row. Some fields may be required here.
 
-- create input
-- update input
-- patch input
-- response output
-- nested response blocks
-- stats blocks
-- custom action input
-- custom action output
+- `update`
+  A client is replacing the full writable state. Required fields are usually
+  still required.
 
-## Why There Are Different Types For Create Update And Patch
+- `patch`
+  A client is changing only some fields. Most fields are usually optional here.
 
-These actions do not mean the same thing.
+That is why many APIs use:
 
-### Create
+- one dataclass for create
+- one dataclass for update
+- one dataclass for partial update
 
-Create means:
+In simple cases, create and update may look almost identical, while patch is
+the nullable version of those fields.
 
-- build a new object
-- usually needs all required creation fields
-- may allow fields that should never be changed later
+## The Shortest Working Factory
 
-### Update
-
-Update means:
-
-- replace the full editable state
-- often expects all editable fields
-- should not usually include create-only fields, for example a user's password
-
-### Patch
-
-Patch means:
-
-- change only part of the object
-- fields are commonly optional
-- omitted fields should stay unchanged
-
-Because these actions have different semantics, it is often useful to model
-them with different dataclass types.
-
-That said, CRUDFactory can derive those different action types automatically
-from one simpler source type when your resource is straightforward.
-
-## The Main Kinds Of Types
-
-You will usually encounter these type roles:
-
-### Request-side types
-
-- `write_input`
-- `create_only_input`
-- `create_input`
-- `update_input`
-- `partial_update_input`
-
-### Response-side types
-
-- `response_dataclass`
-- nested child response dataclasses
-- nested stats dataclasses
-
-### Action types
-
-- detail action input dataclasses
-- detail action response dataclasses
-- collection action input/output dataclasses
-
-## The Shortest Working Setup
-
-This is the smallest useful CRUDFactory resource.
-
-### Django model
-
-```python
-from django.db import models
-
-
-class InventoryItem(models.Model):
-    name = models.CharField(max_length=80)
-    quantity = models.IntegerField(default=0)
-```
-
-### Writable type
+This is the smallest useful configuration:
 
 ```python
 from dataclasses import dataclass, field
 
-from crudfactory import RequestConstraints
+from crudfactory import CRUDFactory, length, range_, regex
 
 
 @dataclass
-class ItemWriteFields:
-    name: str = field(
-        metadata=RequestConstraints.regex(r"^[A-Za-z0-9 -]+$").length(min=2, max=80)
-    )
-    quantity: int = field(metadata=RequestConstraints.range(min=0, max=500))
-```
-
-### Factory
-
-```python
-from crudfactory import CRUDFactory
-
-
-item_factory = CRUDFactory(
-    model=InventoryItem,
-    write_input=ItemWriteFields,
-    route="items",
-    basename="item",
-    app_name="inventory",
-)
-```
-
-### URLs
-
-```python
-from .api import item_factory
-
-app_name = item_factory.app_name
-urlpatterns = item_factory.get_urlpatterns()
-```
-
-This gives you:
-
-- `GET /items/`
-- `GET /items/{id}/`
-- `POST /items/`
-- `PUT /items/{id}/`
-- `PATCH /items/{id}/`
-- `DELETE /items/{id}/`
-
-## The Most Important CRUDFactory Parameters
-
-The constructor can take many arguments, but most users only need to understand
-the main ones first.
-
-### `model`
-
-The Django model that stores the resource.
-
-### `create_input`
-
-The dataclass type used for `POST` request bodies.
-
-### `update_input`
-
-The dataclass type used for `PUT` request bodies.
-
-### `partial_update_input`
-
-The dataclass type used for `PATCH` request bodies.
-
-### `response_mapper`
-
-A function that takes a model instance and returns the response dataclass
-instance.
-
-Use this when the response shape is not simple enough to be derived
-automatically.
-
-### `response_dataclass`
-
-An explicit response type declaration used when the library can automatically
-build the mapper from the response type itself.
-
-### `create_handler`, `update_handler`, `partial_update_handler`
-
-Optional write hooks for create, update, and patch.
-
-Use these when your write logic is more than “assign these fields to this
-model”.
-
-### `writable_fields`
-
-An allowlist for automatic writes.
-
-If omitted, CRUDFactory derives the writable fields from the input DTOs.
-
-### `custom_actions`
-
-Typed non-CRUD endpoints, such as:
-
-- start
-- stop
-- unlock
-- activate
-- bulk import
-
-### `acl`
-
-The ACL configuration for the factory.
-
-### `queryset`
-
-An explicit Django queryset to use for the resource.
-
-This is useful when you want `select_related`, `prefetch_related`, or a
-pre-filtered dataset.
-
-### `route`
-
-The URL route prefix.
-
-Example:
-
-```python
-route="connectors"
-```
-
-usually means endpoints under:
-
-```text
-/connectors/
-```
-
-### `basename`
-
-The DRF router basename.
-
-This affects internal route naming.
-
-### `app_name`
-
-The Django app namespace used when mounting the generated URLs.
-
-## How Automatic CRUD Works
-
-When you pass:
-
-```python
-factory = CRUDFactory(
-    model=InventoryItem,
-    write_input=ItemWriteFields,
-)
-```
-
-CRUDFactory automatically derives:
-
-- create input type
-- update input type
-- patch input type
-- DRF serializers for those inputs
-- simple create/update/patch write logic
-- a response type based on the update fields
-
-This is the most compact mode of the library.
-
-## When Minimal Mode Is Enough
-
-Minimal mode is enough when:
-
-- one endpoint maps cleanly to one Django model
-- the client-facing field names match the model field names
-- the write is just field assignment on that model
-- the response can be generated from the same fields
-- there is no complex business logic in create/update/patch
-
-## When You Need Explicit Types
-
-Use more explicit configuration when:
-
-- create has fields that update should not accept
-- response shape differs from request shape
-- response includes related model fields
-- response includes nested child lists
-- response includes aggregate stats
-- writes touch multiple models
-- you need custom actions
-- you need ACL checks
-
-Typical explicit form:
-
-```python
-factory = CRUDFactory(
-    model=Chargepoint,
-    create_only_input=ChargepointCreateOnlyFields,
-    write_input=ChargepointMutableFields,
-    response_dataclass=ChargepointResponseDTO,
-)
-```
-
-## The Metadata System
-
-The metadata system is what makes CRUDFactory powerful.
-
-Each dataclass field can carry metadata that says things like:
-
-- validate with regex
-- validate min/max length
-- validate numeric range
-- map this API field to a different model field
-- allow filtering on this field
-- allow ordering on this field
-- derive this field from a related model lookup
-- compute this field from an aggregate stat
-
-CRUDFactory recommends grouped metadata helper classes so autocomplete is
-easier and imports stay small.
-
-The main classes are:
-
-- `RequestConstraints`
-- `RequestFilter`
-- `RequestMapping`
-- `ResponseField`
-- `ResponseStats`
-
-## RequestConstraints
-
-Use `RequestConstraints` for input validation.
-
-Available methods:
-
-- `.regex(...)`
-- `.length(...)`
-- `.range(...)`
-- `.choices(...)`
-
-Example:
-
-```python
-name: str = field(
-    metadata=RequestConstraints.regex(r"^[A-Za-z ]+$").length(min=2, max=80)
-)
-quantity: int = field(
-    metadata=RequestConstraints.range(min=0, max=500)
-)
-status: str = field(
-    metadata=RequestConstraints.choices(["online", "offline", "faulted"])
-)
-```
-
-## RequestFilter
-
-Use `RequestFilter` on response fields to allow list filtering and ordering.
-
-Available methods:
-
-- `.filterable(...)`
-- `.orderable(...)`
-- `.sortable(...)`
-
-Example:
-
-```python
-name: str = field(
-    metadata=RequestFilter.filterable(lookups=("exact", "icontains")).orderable()
-)
-```
-
-This lets the client call things like:
-
-```http
-GET /items/?name__icontains=charger&ordering=-name
-```
-
-## RequestMapping
-
-Use `RequestMapping` when the API field name differs from the Django model
-field name.
-
-Example:
-
-```python
-public_name: str = field(
-    metadata=RequestMapping.model_field("name")
-)
-```
-
-This means:
-
-- the API receives `public_name`
-- the Django model stores the value in `name`
-
-It can also apply read and write transforms:
-
-```python
-price: str = field(
-    metadata=RequestMapping.model_field(
-        "price_cents",
-        read_transform=lambda cents: f"{cents / 100:.2f}",
-        write_transform=lambda dollars: int(float(dollars) * 100),
-    )
-)
-```
-
-## ResponseField
-
-Use `ResponseField` for response-side mapping.
-
-### Map from another model field
-
-```python
-location_name: str = field(
-    metadata=ResponseField.from_model("chargepoint__location__name")
-)
-```
-
-### Map a related child list
-
-```python
-connectors: list[ConnectorDTO] = field(
-    metadata=ResponseField.related_list("connectors")
-)
-```
-
-This is what allows nested read responses without manually writing a mapper for
-every case.
-
-## ResponseStats
-
-Use `ResponseStats` for per-object aggregate stats.
-
-Available methods:
-
-- `ResponseStats.count(...)`
-- `ResponseStats.sum(...)`
-- `ResponseStats.avg(...)`
-- `ResponseStats.min(...)`
-- `ResponseStats.max(...)`
-
-Example:
-
-```python
-from django.db.models import Q
+class ItemCreateDTO:
+    name: str = field(metadata={**regex(r"^[A-Za-z ]+$"), **length(min=2, max=80)})
+    quantity: int = field(metadata=range_(min=0, max=500))
 
 
 @dataclass
-class StatusStatsDTO:
-    online: int = ResponseStats.count(
-        "connectors",
-        filter=Q(connectors__status="online"),
+class ItemUpdateDTO:
+    name: str = field(metadata={**regex(r"^[A-Za-z ]+$"), **length(min=2, max=80)})
+    quantity: int = field(metadata=range_(min=0, max=500))
+
+
+@dataclass
+class ItemPatchDTO:
+    name: str | None = field(
+        default=None,
+        metadata={**regex(r"^[A-Za-z ]+$"), **length(min=2, max=80)},
     )
-    faulted: int = ResponseStats.count(
-        "connectors",
-        filter=Q(connectors__status="faulted"),
-    )
-```
+    quantity: int | None = field(default=None, metadata=range_(min=0, max=500))
 
-CRUDFactory will annotate the queryset and fill those fields automatically.
 
-## How To Create Request Types
-
-There are three common styles.
-
-### Style 1: One `write_input`
-
-Best for simple resources.
-
-```python
-factory = CRUDFactory(
-    model=InventoryItem,
-    write_input=ItemWriteFields,
-)
-```
-
-### Style 2: `create_only_input` plus `write_input`
-
-Best when create requires extra fields.
-
-```python
-factory = CRUDFactory(
-    model=Chargepoint,
-    create_only_input=ChargepointCreateOnlyFields,
-    write_input=ChargepointMutableFields,
-)
-```
-
-### Style 3: Fully explicit action types
-
-Best when all actions have clearly different contracts.
-
-```python
 factory = CRUDFactory(
     model=InventoryItem,
     create_input=ItemCreateDTO,
@@ -785,233 +284,363 @@ factory = CRUDFactory(
 )
 ```
 
-## How To Create Response Types
+This works because:
 
-There are two main styles.
+- CRUDFactory can generate simple create, update, and patch handlers when you
+  do not provide explicit ones
+- if you omit `response_mapper` and `response_dataclass`, CRUDFactory can build
+  a response mapper automatically from `update_input`
 
-### Automatic response
+That minimal path is intentionally aimed at low-boilerplate single-model CRUD.
 
-If you omit `response_dataclass` and `response_mapper`, CRUDFactory can derive a
-response type from the update/write input.
+## When The Minimal Style Is Enough
 
-### Explicit response
+Use the minimal style when:
 
-Use `response_dataclass=...` when:
+- one endpoint mostly maps to one Django model
+- writes are simple field assignment
+- PATCH can ignore `None` values rather than writing SQL `NULL`
+- the response contract is close to the model or update DTO contract
 
-- you need related fields
-- you need nested child lists
-- you need stats
-- you want a response that does not mirror the write fields
+This is the “quick CRUD” path the library is best at.
+
+## When You Should Use Explicit Handlers
+
+Use explicit `create_handler`, `update_handler`, and `partial_update_handler`
+when:
+
+- one write affects multiple models
+- you need service-layer behavior
+- PATCH semantics are custom
+- write-time business rules are complex
+- a nullable model field must truly be set to `NULL` during patch
+
+Use an explicit `response_mapper` when:
+
+- the response combines multiple models
+- the response shape differs strongly from the writable fields
+- you want complete control over response construction
+
+## How Request DTO Validation Works
+
+Request validation is declared in dataclass field metadata.
+
+The package exports these validation helpers:
+
+- `regex(...)`
+- `length(...)`
+- `range_(...)`
+- `choices(...)`
 
 Example:
 
 ```python
+from dataclasses import dataclass, field
+
+from crudfactory import choices, length, range_, regex
+
+
+@dataclass
+class ConnectorCreateDTO:
+    name: str = field(
+        metadata={
+            **regex(r"^[A-Za-z0-9 -]+$"),
+            **length(min=2, max=80),
+        }
+    )
+    status: str = field(metadata=choices(["online", "offline", "faulted"]))
+    power_kw: int = field(metadata=range_(min=0, max=500))
+```
+
+CRUDFactory turns those metadata declarations into serializer validation.
+
+## How Response DTOs Work
+
+A response DTO describes successful output.
+
+You can provide responses in two ways:
+
+### 1. Let CRUDFactory derive a simple response automatically
+
+If you do not provide `response_mapper` or `response_dataclass`, CRUDFactory
+falls back to the shape of `update_input`.
+
+That is useful for very simple CRUD endpoints.
+
+### 2. Provide a response dataclass or response mapper explicitly
+
+Example:
+
+```python
+from dataclasses import dataclass, field
+
+from crudfactory import filterable, model_field, orderable
+
+
 @dataclass
 class ConnectorResponseDTO:
     id: int
     chargepoint_name: str = field(
-        metadata=ResponseField.from_model("chargepoint__name")
+        metadata={**model_field("chargepoint__name"), **filterable(), **orderable()}
     )
-    location_name: str = field(
-        metadata=ResponseField.from_model("chargepoint__location__name")
-    )
-    name: str
-    status: str
+    name: str = field(metadata={**filterable(lookups=("exact", "icontains")), **orderable()})
+    status: str = field(metadata=filterable())
 ```
 
-## How To Map A Type Field To A Different Model Column
-
-Use `RequestMapping.model_field(...)`.
-
-Example:
+Then:
 
 ```python
-public_name: str = field(
-    metadata=RequestMapping.model_field("name")
+factory = CRUDFactory(
+    model=Connector,
+    create_input=ConnectorCreateDTO,
+    update_input=ConnectorUpdateDTO,
+    partial_update_input=ConnectorPatchDTO,
+    response_dataclass=ConnectorResponseDTO,
 )
 ```
 
-This is extremely useful when:
-
-- the database column name is not ideal for the API
-- the API wants a clearer name than the model
-- legacy tables have awkward column names
+If the response cannot be derived cleanly from metadata alone, provide
+`response_mapper`.
 
 ## How Filtering And Ordering Work
 
-Filtering and ordering are declared on response fields.
+Filtering and ordering are declared on response DTO fields, not on request
+DTOs.
+
+The helpers are:
+
+- `filterable(...)`
+- `orderable(...)`
 
 Example:
 
 ```python
+from dataclasses import dataclass, field
+
+from crudfactory import filterable, orderable
+
+
 @dataclass
 class ItemResponseDTO:
     id: int
     name: str = field(
-        metadata=RequestFilter.filterable(lookups=("exact", "icontains")).orderable()
+        metadata={
+            **filterable(lookups=("exact", "icontains")),
+            **orderable(),
+        }
     )
     quantity: int = field(
-        metadata=RequestFilter.filterable(lookups=("gte", "lte")).orderable()
+        metadata={
+            **filterable(lookups=("gte", "lte")),
+            **orderable(),
+        }
     )
 ```
 
-This enables:
+That allows URLs like:
 
-```http
-GET /items/?name__icontains=charger&quantity__gte=10&ordering=-quantity
+- `GET /items/?name=widget`
+- `GET /items/?name__icontains=wid`
+- `GET /items/?quantity__gte=10`
+- `GET /items/?ordering=-quantity,name`
+
+If the public field name should map to a different ORM lookup, pass it to the
+helper:
+
+```python
+supplier_name: str = field(
+    metadata={
+        **filterable("supplier__name", lookups=("exact", "icontains")),
+        **orderable("supplier__name"),
+    }
+)
 ```
 
-## How Aggregate Stats Work
+## How Field Mapping Works
 
-Aggregate stats live inside response dataclasses.
+Use `model_field(...)` when the DTO field name differs from the model field
+name.
 
 Example:
 
 ```python
+from dataclasses import dataclass, field
+
+from crudfactory import model_field
+
+
 @dataclass
-class ConnectorStatsDTO:
-    online: int = ResponseStats.count(
-        "connectors",
-        filter=Q(connectors__status="online"),
+class ItemCreateDTO:
+    public_name: str = field(metadata=model_field("name"))
+```
+
+This means:
+
+- public API field: `public_name`
+- Django model field: `name`
+
+`model_field(...)` can also carry read and write transforms:
+
+```python
+price: str = field(
+    metadata=model_field(
+        "price_cents",
+        read_transform=lambda cents: f"{cents / 100:.2f}",
+        write_transform=lambda euros: int(float(euros) * 100),
     )
-    offline: int = ResponseStats.count(
-        "connectors",
-        filter=Q(connectors__status="offline"),
-    )
+)
+```
+
+## How Aggregate Stats Work
+
+Aggregate stats are declared on response DTO fields.
+
+The helpers are:
+
+- `count_stat(...)`
+- `sum_stat(...)`
+- `avg_stat(...)`
+- `min_stat(...)`
+- `max_stat(...)`
+
+Example:
+
+```python
+from dataclasses import dataclass, field
+
+from django.db.models import Q
+from crudfactory import count_stat
+
+
+@dataclass
+class ChargerStatsDTO:
+    online: int = count_stat("connectors", filter=Q(connectors__status="online"))
+    offline: int = count_stat("connectors", filter=Q(connectors__status="offline"))
 
 
 @dataclass
 class LocationResponseDTO:
     id: int
     name: str
-    stats: ConnectorStatsDTO = field(default_factory=ConnectorStatsDTO)
+    stats: ChargerStatsDTO = field(default_factory=ChargerStatsDTO)
 ```
 
-This is output-only. It does not affect request validation.
-
-## How Nested Responses Work
-
-Nested responses are supported for read output.
-
-Example:
-
-```python
-@dataclass
-class ChargepointConnectorDTO:
-    id: int
-    name: str
-    status: str
-
-
-@dataclass
-class ChargepointResponseDTO:
-    id: int
-    name: str
-    connectors: list[ChargepointConnectorDTO] = field(
-        metadata=ResponseField.related_list("connectors")
-    )
-```
-
-CRUDFactory can walk those types and generate nested output.
+CRUDFactory discovers those stat fields, annotates the queryset, and injects
+the aggregate values into the response DTO.
 
 ## How Custom Actions Work
 
-Custom actions are typed endpoints beyond normal CRUD.
+Custom actions are extra endpoints attached to the generated viewset.
 
-Example use cases:
+There are two helpers:
 
-- `POST /connectors/{id}/start/`
-- `POST /connectors/{id}/stop/`
-- `POST /connectors/{id}/unlock/`
+- `detail_action(...)`
+  For routes like `POST /items/{id}/activate/`
 
-Example:
+- `collection_action(...)`
+  For routes like `POST /items/bulk-import/`
 
-```python
-@dataclass
-class ConnectorActionInputDTO:
-    reason: str | None = field(default=None, metadata=RequestConstraints.length(max=80))
-
-
-@dataclass
-class ConnectorActionResponseDTO:
-    id: int
-    action: str
-    status: str
-    message: str
-```
-
-Then register actions with `detail_action(...)` or grouped helpers like
-`detail_actions(...)`.
-
-## How ACL Works
-
-CRUDFactory supports ACL through:
-
-- `crud_acl(...)`
-- `DjangoACLBackend`
-- `ACLResourceRef`
-- `resource_ref_templates(...)`
-
-Typical pattern:
+Example detail action:
 
 ```python
-connector_acl = crud_acl(
-    backend=DjangoACLBackend(),
-    permission_prefix="app.connector",
-    resource_ref_from_instance=...,
+from dataclasses import dataclass
+
+from crudfactory import detail_action
+
+
+@dataclass
+class ActivateInputDTO:
+    reason: str | None = None
+
+
+@dataclass
+class ActivateResponseDTO:
+    ok: bool
+
+
+activate_action = detail_action(
+    name="activate",
+    input_dataclass=ActivateInputDTO,
+    response_dataclass=ActivateResponseDTO,
+    handler=activate_item,
 )
 ```
 
-ACL can protect:
+Pass these through the factory’s `custom_actions` parameter.
 
-- list routes
-- detail routes
-- create/update/delete
-- custom actions
+## How ACL Integration Works
 
-Common ACL-related constructor pieces:
+ACL integration is configured through:
 
-### `crud_acl(...)`
+- `ACLBackend`
+- `ACLConfig`
+- `ACLActionConfig`
+- `crud_acl(...)`
 
-Convenience helper that builds normal CRUD permission mapping from a permission
-prefix.
-
-### `permission_prefix`
-
-The shared prefix used to derive permission names.
-
-Example:
+The fastest path is `crud_acl(...)`:
 
 ```python
-permission_prefix="app.connector"
+from crudfactory import DjangoACLBackend, crud_acl
+
+
+factory = CRUDFactory(
+    model=Connector,
+    create_input=ConnectorCreateDTO,
+    update_input=ConnectorUpdateDTO,
+    partial_update_input=ConnectorPatchDTO,
+    acl=crud_acl(
+        backend=DjangoACLBackend(),
+        permission_prefix="app.connector",
+        resource_ref_from_instance=connector_resource_ref,
+        resource_ref_from_create_input=create_resource_ref,
+        resource_ref_from_update_input=update_resource_ref,
+        resource_ref_from_patch_input=patch_resource_ref,
+    ),
+)
 ```
 
-This leads to permission keys like:
+`crud_acl(...)` uses the default permission mapping:
 
-- `app.connector.read`
-- `app.connector.create`
-- `app.connector.update`
-- `app.connector.delete`
+- `list` -> `{prefix}.read`
+- `retrieve` -> `{prefix}.read`
+- `create` -> `{prefix}.create`
+- `update` -> `{prefix}.update`
+- `partial_update` -> `{prefix}.update`
+- `destroy` -> `{prefix}.delete`
 
-### `resource_ref_from_instance`
+If you need different behavior, build an `ACLConfig` explicitly.
 
-How a model instance becomes an ACL resource reference.
+## How Pagination Works
 
-### `resource_ref_from_create_input`
+You can pass a normal DRF pagination class to `pagination_class`.
 
-How create is authorized before the new object exists in the database.
+If you want a compact helper for the common page-number style, use
+`page_number_pagination(...)`:
 
-### `queryset_filter`
+```python
+from crudfactory import CRUDFactory, page_number_pagination
 
-Optional advanced hook for efficiently filtering lists by access.
 
-## How Errors Look
+factory = CRUDFactory(
+    model=InventoryItem,
+    create_input=ItemCreateDTO,
+    update_input=ItemUpdateDTO,
+    partial_update_input=ItemPatchDTO,
+    pagination_class=page_number_pagination(page_size=25),
+)
+```
 
-Successful responses use your response DTO shape.
+## How Error Responses Look
 
-Non-successful responses use DRF-style error payloads.
+Successful responses use your response DTO contract.
 
-### Validation error
+Unsuccessful responses follow DRF-style error payloads.
+
+### Validation errors
+
+Status: `400`
+
+Typical shape:
 
 ```json
 {
@@ -1021,176 +650,179 @@ Non-successful responses use DRF-style error payloads.
 
 ### Not found
 
+Status: `404`
+
+Typical shape:
+
 ```json
 {
   "detail": "Not found."
 }
 ```
 
-### Permission failure
+When ACL is configured with `unauthorized_as_404=True`, unauthorized access to
+single resources may also appear as `404`.
 
-Depending on ACL settings, this may be:
+### Forbidden
 
-- `403`
-- or `404` to avoid revealing resource existence
+Status: `403`
 
-Frontend code should never assume that error payloads match success DTOs.
-
-## How Pagination Works
-
-CRUDFactory uses normal DRF pagination.
-
-The helper:
-
-```python
-from crudfactory import page_number_pagination
-```
-
-lets you configure a simple page-number paginator:
-
-```python
-factory = CRUDFactory(
-    ...,
-    pagination_class=page_number_pagination(page_size=20, max_page_size=100),
-)
-```
-
-Paginated list responses use DRF’s standard:
+Typical shape:
 
 ```json
 {
-  "count": 42,
-  "next": "http://localhost/api/items/?page=2",
-  "previous": null,
-  "results": []
+  "detail": "You do not have permission to perform this action."
 }
 ```
 
-## How Docs Generation Works
+### Method not allowed
 
-CRUDFactory can generate:
+Status: `405`
 
-### OpenAPI schema
+Typical shape:
 
-If `drf-spectacular` is installed and configured.
-
-### Markdown factory docs
-
-Each factory can render Markdown describing:
-
-- endpoints
-- request types
-- response types
-- filters
-- ordering
-- actions
-- error shapes
-
-Example:
-
-```python
-markdown = factory.render_markdown_docs(
-    title="Connector CRUD Factory",
-    base_path="/api",
-)
+```json
+{
+  "detail": "Method \"POST\" not allowed."
+}
 ```
 
-## Recommended Project Structure
+## Important CRUDFactory Parameters
 
-The cleanest structure is one file per factory.
+The most important `CRUDFactory(...)` parameters are:
 
-Recommended layout:
+- `model`
+  The Django model behind the resource.
 
-```text
-your_app/
-  models.py
-  urls.py
-  factories/
-    location_factory.py
-    chargepoint_factory.py
-    connector_factory.py
-```
+- `create_input`, `update_input`, `partial_update_input`
+  Request DTO dataclasses for `POST`, `PUT`, and `PATCH`.
 
-Each factory file should contain:
+- `response_mapper`
+  Explicit callable that turns one model instance into one response DTO.
 
-- request dataclasses
-- response dataclasses
-- queryset configuration
-- ACL wiring
-- custom actions
-- the `CRUDFactory(...)` declaration
+- `response_dataclass`
+  Response DTO type used when CRUDFactory can build the mapper automatically.
 
-This keeps each resource portable and easy to understand.
+- `create_handler`, `update_handler`, `partial_update_handler`
+  Explicit write hooks. Use these when the write path is not a simple
+  single-model assignment.
+
+- `writable_fields`
+  Optional allowlist of DTO field names for automatic writes. If omitted,
+  CRUDFactory uses all fields in the relevant request DTO.
+
+- `custom_actions`
+  Typed extra routes produced through `detail_action(...)` or
+  `collection_action(...)`.
+
+- `acl`
+  Optional ACL integration configuration.
+
+- `queryset`
+  Custom queryset used by the generated viewset.
+
+- `lookup_field`, `lookup_url_kwarg`
+  Standard DRF lookup configuration.
+
+- `permission_classes`, `authentication_classes`
+  Standard DRF security hooks.
+
+- `pagination_class`
+  DRF pagination class or one from `page_number_pagination(...)`.
+
+- `app_name`, `route`, `basename`
+  Routing and namespacing controls.
 
 ## A Complete Example
 
 ```python
 from dataclasses import dataclass, field
-from decimal import Decimal
 
 from crudfactory import (
     CRUDFactory,
-    QueryPlan,
-    RequestConstraints,
-    RequestFilter,
-    RequestMapping,
-    ResponseField,
+    filterable,
+    length,
+    model_field,
+    orderable,
+    range_,
+    regex,
 )
 
 
 @dataclass
-class ConnectorWriteFields:
-    chargepoint_id: int = field(
-        metadata=RequestMapping.model_field("chargepoint_id").range(min=1)
-    )
-    name: str = field(
-        metadata=RequestConstraints.regex(r"^[A-Za-z0-9 -]+$").length(min=2, max=80)
-    )
-    status: str = field(
-        metadata=RequestConstraints.choices(["online", "offline", "faulted", "occupied"])
-    )
-    power_kw: Decimal = field(metadata=RequestConstraints.range(min=0, max=500))
+class ItemCreateDTO:
+    name: str = field(metadata={**regex(r"^[A-Za-z ]+$"), **length(min=2, max=80)})
+    quantity: int = field(metadata=range_(min=0, max=500))
 
 
 @dataclass
-class ConnectorResponseDTO:
+class ItemUpdateDTO:
+    name: str = field(metadata={**regex(r"^[A-Za-z ]+$"), **length(min=2, max=80)})
+    quantity: int = field(metadata=range_(min=0, max=500))
+
+
+@dataclass
+class ItemPatchDTO:
+    name: str | None = field(
+        default=None,
+        metadata={**regex(r"^[A-Za-z ]+$"), **length(min=2, max=80)},
+    )
+    quantity: int | None = field(default=None, metadata=range_(min=0, max=500))
+
+
+@dataclass
+class ItemResponseDTO:
     id: int
-    chargepoint_name: str = field(
-        metadata=ResponseField.from_model("chargepoint__name")
-        .filterable("chargepoint__name", lookups=("exact", "icontains"))
-        .orderable("chargepoint__name")
+    public_name: str = field(
+        metadata={
+            **model_field("name"),
+            **filterable(lookups=("exact", "icontains")),
+            **orderable(),
+        }
     )
-    location_name: str = field(
-        metadata=ResponseField.from_model("chargepoint__location__name")
-        .filterable("chargepoint__location__name", lookups=("exact", "icontains"))
-        .orderable("chargepoint__location__name")
+    quantity: int = field(
+        metadata={
+            **filterable(lookups=("gte", "lte")),
+            **orderable(),
+        }
     )
-    name: str = field(
-        metadata=RequestFilter.filterable(lookups=("exact", "icontains")).orderable()
-    )
-    status: str = field(
-        metadata=RequestFilter.filterable(lookups=("exact",)).orderable()
-    )
-    power_kw: Decimal = field(metadata=RequestFilter.orderable())
 
 
-connector_factory = CRUDFactory(
-    model=Connector,
-    write_input=ConnectorWriteFields,
-    response_dataclass=ConnectorResponseDTO,
-    queryset_plan=QueryPlan().select("chargepoint__location").order_by("id"),
-    route="connectors",
-    basename="connector",
-    app_name="inventory",
+factory = CRUDFactory(
+    model=InventoryItem,
+    create_input=ItemCreateDTO,
+    update_input=ItemUpdateDTO,
+    partial_update_input=ItemPatchDTO,
+    response_dataclass=ItemResponseDTO,
 )
 ```
 
-## What To Read Next
+This one factory gives you:
 
-This page is meant to be self-contained, but the supporting pages are still
-useful:
+- `GET /items/`
+- `GET /items/{pk}/`
+- `POST /items/`
+- `PUT /items/{pk}/`
+- `PATCH /items/{pk}/`
+- `DELETE /items/{pk}/`
+
+with typed validation, filtering, ordering, and the declared response shape.
+
+## Reference Pages
+
+Main references:
 
 - [CRUDFactory](CRUDFactory.md)
+- [Validation Helpers](Validation-Helpers.md)
+- [Filtering And Ordering](Filtering-And-Ordering.md)
+- [model_field](model_field.md)
+- [Aggregate Stats](Aggregate-Stats.md)
+- [Custom Actions](Custom-Actions.md)
+- [page_number_pagination](page_number_pagination.md)
+- [crud_acl](crud_acl.md)
+
+ACL references:
+
 - [ACLBackend](ACLBackend.md)
 - [ACLActionConfig](ACLActionConfig.md)
 - [ACLConfig](ACLConfig.md)

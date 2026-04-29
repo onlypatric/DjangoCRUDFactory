@@ -2,26 +2,28 @@
 
 `CRUDFactory` is the main class of the library.
 
-It generates Django REST Framework CRUD endpoints from:
+It generates Django REST Framework endpoints from:
 
-- a Django model
-- request dataclass types
+- one Django model
+- request DTO dataclasses
 - a response mapper or response dataclass
-- optional ACL, pagination, and custom action configuration
+- optional custom actions
+- optional ACL configuration
+- optional pagination and routing settings
 
-## What It Does
+## Main Job
 
 A `CRUDFactory` instance can generate:
 
 - a DRF `ModelViewSet`
 - a DRF router
 - Django URL patterns
-- response mapping helpers
-- Markdown docs for the factory
+- include-ready URL config tuples
+- response DTO instances
+- response JSON-like dictionaries
+- Markdown docs for the generated API contract
 
 ## Constructor Shape
-
-Typical usage:
 
 ```python
 factory = CRUDFactory(
@@ -36,134 +38,105 @@ factory = CRUDFactory(
 )
 ```
 
-## Most Important Parameters
+## Constructor Parameters
 
 ### `model`
 
-The Django model that backs the resource.
+The Django model behind the resource.
+
+### `response_mapper`
+
+Callable used to turn one model instance into one response DTO instance.
+
+Use this when the response shape is complex or assembled from multiple models.
+
+### `response_dataclass`
+
+Alternative to `response_mapper`.
+
+If you provide `response_dataclass`, CRUDFactory will try to build the response
+mapper automatically from that type declaration.
 
 ### `create_input`, `update_input`, `partial_update_input`
 
-Dataclass types that describe the request body for:
+Request DTO dataclasses for:
 
 - `POST`
 - `PUT`
 - `PATCH`
 
-### `response_mapper`
-
-A callable that takes a model instance and returns a response dataclass
-instance.
-
-### `response_dataclass`
-
-An alternative to `response_mapper` when the library can auto-build the mapper
-from the response type declaration.
-
 ### `create_handler`, `update_handler`, `partial_update_handler`
 
-Optional explicit persistence hooks.
+Optional explicit write hooks.
 
-Use these when writes are more complex than assigning model fields directly.
+If you do not provide them and the endpoint is not read-only, CRUDFactory tries
+to generate simple write handlers automatically from the request DTO fields.
 
 ### `writable_fields`
 
-Allowlist of DTO field names that may be written automatically by the built-in
-simple-write path.
+Optional allowlist of DTO field names that automatic writes may touch.
+
+If omitted, CRUDFactory uses all fields from the relevant request DTO.
 
 ### `custom_actions`
 
-Typed extra endpoints, such as:
+Sequence of custom action specs built through:
 
-- `POST /items/{id}/activate/`
-- `POST /items/bulk-import/`
+- `detail_action(...)`
+- `collection_action(...)`
 
 ### `acl`
 
-Factory-level ACL configuration.
+Optional factory-level ACL configuration.
+
+### `read_only`
+
+Internal flag used by `CRUDFactory.read_only(...)`. In normal application code,
+prefer using the classmethod rather than setting this manually.
+
+### `app_name`
+
+App name used by URL helpers. Defaults to the Django app label.
+
+### `route`
+
+Router path segment. Defaults to the model name.
+
+### `basename`
+
+DRF router basename. Defaults to the model name.
 
 ### `queryset`
 
-Custom base queryset for list and detail views.
+Optional custom base queryset for list and detail operations.
+
+### `lookup_field`, `lookup_url_kwarg`
+
+Standard DRF lookup configuration.
+
+### `permission_classes`, `authentication_classes`
+
+Standard DRF viewset security configuration.
 
 ### `pagination_class`
 
-DRF pagination class, including one produced by `page_number_pagination(...)`.
+Optional DRF pagination class, including one created by
+`page_number_pagination(...)`.
 
-## What It Generates
+## Automatic Behavior
 
-In normal full-CRUD mode:
+CRUDFactory resolves responses in this order:
 
-- `GET /route/`
-- `GET /route/{id}/`
-- `POST /route/`
-- `PUT /route/{id}/`
-- `PATCH /route/{id}/`
-- `DELETE /route/{id}/`
+1. use `response_mapper` if provided
+2. otherwise use `response_dataclass` if provided
+3. otherwise derive a simple response mapper from `update_input`
 
-## Main Methods
+CRUDFactory resolves writes like this:
 
-### `get_viewset_class()`
+1. use explicit handlers if provided
+2. otherwise generate simple handlers from the request DTO fields
 
-Returns the generated DRF `ModelViewSet` class.
-
-### `get_router()`
-
-Returns a DRF router with the viewset already registered.
-
-### `get_urlpatterns()`
-
-Returns Django `urlpatterns` for easy use inside an app `urls.py`.
-
-### `get_app_urlconf()`
-
-Returns an include-ready tuple for Django URL mounting.
-
-### `to_dataclass(instance)`
-
-Maps one model instance into the response dataclass.
-
-### `to_response_data(instance)`
-
-Maps one model instance into JSON-ready response data.
-
-### `render_markdown_docs(...)`
-
-Generates a Markdown description of the factory’s API contract.
-
-## Read-Only Mode
-
-Use `CRUDFactory.read_only(...)` when you want:
-
-- list
-- retrieve
-
-without write endpoints.
-
-This is useful for:
-
-- summary endpoints
-- dashboards
-- reporting APIs
-
-## When To Use Automatic Writes
-
-Automatic writes are good when:
-
-- the DTO fields map directly to one Django model
-- the write logic is simple field assignment
-- there is no multi-model coordination
-
-## When To Use Explicit Handlers
-
-Use explicit handlers when:
-
-- create/update/patch touches related models
-- the write triggers service-layer logic
-- patch semantics are custom
-- write-time business rules are significant
-
-## Minimal Example
+That is why this minimal factory works:
 
 ```python
 factory = CRUDFactory(
@@ -174,8 +147,102 @@ factory = CRUDFactory(
 )
 ```
 
-## Related Classes
+## Generated CRUD Routes
 
-- [ACLConfig](ACLConfig.md)
-- [ACLActionConfig](ACLActionConfig.md)
-- [ACLBackend](ACLBackend.md)
+In normal full CRUD mode, the generated viewset exposes:
+
+- `GET /route/`
+- `GET /route/{id}/`
+- `POST /route/`
+- `PUT /route/{id}/`
+- `PATCH /route/{id}/`
+- `DELETE /route/{id}/`
+
+Plus any configured custom actions.
+
+## Main Methods
+
+### `get_viewset_class()`
+
+Returns the generated DRF `ModelViewSet` subclass.
+
+### `get_router(...)`
+
+Returns a DRF router with the generated viewset already registered.
+
+### `get_urlpatterns(...)`
+
+Returns Django `urlpatterns` suitable for an app-level `urls.py`.
+
+### `get_app_urlconf(...)`
+
+Returns an include-ready tuple:
+
+```python
+(urlpatterns, app_name, namespace)
+```
+
+### `to_dataclass(instance)`
+
+Maps one model instance into the configured response DTO.
+
+### `to_response_data(instance)`
+
+Maps one model instance into JSON-ready response data, including aggregate stat
+injection when stats are declared.
+
+### `render_markdown_docs(...)`
+
+Generates a Markdown description of the factory contract.
+
+## `CRUDFactory.read_only(...)`
+
+Use `CRUDFactory.read_only(...)` when the resource should only expose:
+
+- list
+- retrieve
+
+Example:
+
+```python
+factory = CRUDFactory.read_only(
+    model=InventoryItem,
+    response_dataclass=ItemResponseDTO,
+)
+```
+
+This is useful for:
+
+- dashboards
+- reporting endpoints
+- summary APIs
+- read-only admin resources
+
+## When Automatic Writes Are Good
+
+Automatic writes are a good fit when:
+
+- one endpoint writes to one model
+- field assignment is straightforward
+- DTO field names mostly match model field names
+- patch can ignore `None` values
+
+## When Explicit Handlers Are Better
+
+Use explicit handlers when:
+
+- writes span multiple models
+- service-layer orchestration is needed
+- patch semantics are custom
+- write-time validation is business-specific
+- you need complete control over persistence behavior
+
+## Related Pages
+
+- [Home](Home.md)
+- [Validation Helpers](Validation-Helpers.md)
+- [Filtering And Ordering](Filtering-And-Ordering.md)
+- [model_field](model_field.md)
+- [Aggregate Stats](Aggregate-Stats.md)
+- [Custom Actions](Custom-Actions.md)
+- [crud_acl](crud_acl.md)
