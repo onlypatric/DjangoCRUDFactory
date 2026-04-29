@@ -1,0 +1,23 @@
+# Runtime, local, and generated files.
+# The source of truth in this repo is the library under `src/crudfactory/`
+# plus the human-facing documentation in `README.md` and `wiki/`.
+
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.pyright/
+dist/
+build/
+demo_output/
+*.sqlite3
+
+# Generated docs and exports
+wiki/generated/
+
+# Local editor or OS noise
+*.swp
+*.swo

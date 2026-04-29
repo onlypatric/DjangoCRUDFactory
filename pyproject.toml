@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crudfactory"
+version = "0.1.0"
+description = "Small Django REST Framework CRUD view factory."
+requires-python = ">=3.12"
+dependencies = [
+    "django>=6.0,<7.0",
+    "djangorestframework>=3.17,<4.0",
+]
+
+[project.optional-dependencies]
+schema = [
+    "drf-spectacular>=0.29,<1.0",
+]
+dev = [
+    "django-stubs>=6.0,<7.0",
+    "djangorestframework-stubs>=3.16,<4.0",
+    "drf-spectacular>=0.29,<1.0",
+    "pyright>=1.1.409",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+crudfactory = ["py.typed"]

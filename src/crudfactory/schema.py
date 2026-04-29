@@ -1,0 +1,349 @@
+from __future__ import annotations
+
+import datetime as dt
+from dataclasses import Field, fields, is_dataclass
+from decimal import Decimal
+from types import UnionType
+from typing import Any, Union, get_args, get_origin, get_type_hints
+from uuid import UUID
+
+from django.db import models
+from rest_framework import serializers
+from rest_framework.viewsets import ModelViewSet
+
+from .dataclass_serializers import (
+    ensure_dataclass_type,
+    first_type_argument_or_any,
+    unwrap_optional_type,
+)
+from .filters import FilterSpec
+from .ordering import ORDERING_QUERY_PARAM, OrderSpec
+
+__all__: list[str] = []
+
+_RESPONSE_SERIALIZER_CACHE: dict[
+    tuple[type[Any], str],
+    type[serializers.Serializer],
+] = {}
+
+
+def build_response_serializer_from_dataclass(
+    dataclass_type: type[Any],
+    *,
+    name: str,
+) -> type[serializers.Serializer]:
+    """Create a read-only DRF Serializer class from a response dataclass.
+
+    Request serializers deliberately reject nested dataclasses because incoming
+    writes should be explicit DTOs.  Response schemas need nested dataclass
+    support because output DTOs often contain aggregate stats or grouped data.
+    """
+    ensure_dataclass_type("response dataclass", dataclass_type)
+    cache_key = (dataclass_type, name)
+    cached_serializer = _RESPONSE_SERIALIZER_CACHE.get(cache_key)
+    if cached_serializer is not None:
+        return cached_serializer
+
+    serializer_fields = build_response_serializer_fields(dataclass_type)
+    serializer_class = type(name, (serializers.Serializer,), serializer_fields)
+    _RESPONSE_SERIALIZER_CACHE[cache_key] = serializer_class
+    return serializer_class
+
+
+def build_response_serializer_fields(
+    dataclass_type: type[Any],
+) -> dict[str, serializers.Field]:
+    """Return read-only serializer fields for every response dataclass field."""
+    serializer_fields: dict[str, serializers.Field] = {}
+    type_hints = get_type_hints(dataclass_type)
+
+    for dataclass_field in fields(dataclass_type):
+        field_type = type_hints.get(dataclass_field.name, dataclass_field.type)
+        serializer_fields[dataclass_field.name] = build_response_serializer_field(
+            field_type,
+            dataclass_field.name,
+            dataclass_field=dataclass_field,
+        )
+
+    return serializer_fields
+
+
+def build_response_serializer_field(
+    field_type: Any,
+    field_name: str,
+    *,
+    dataclass_field: Field[Any] | None = None,
+) -> serializers.Field:
+    """Build one read-only DRF field for a response dataclass annotation."""
+    inner_type, allow_null = unwrap_optional_type(field_type)
+    origin = get_origin(inner_type)
+    kwargs = response_field_kwargs(allow_null=allow_null)
+
+    if inner_type is str:
+        return serializers.CharField(**kwargs)
+    if inner_type is int:
+        return serializers.IntegerField(**kwargs)
+    if inner_type is float:
+        return serializers.FloatField(**kwargs)
+    if inner_type is bool:
+        return serializers.BooleanField(**kwargs)
+    if inner_type is dt.date:
+        return serializers.DateField(**kwargs)
+    if inner_type is dt.datetime:
+        return serializers.DateTimeField(**kwargs)
+    if inner_type is Decimal:
+        return serializers.DecimalField(max_digits=38, decimal_places=18, **kwargs)
+    if inner_type is UUID:
+        return serializers.UUIDField(**kwargs)
+    if is_dataclass_type(inner_type):
+        serializer_class = nested_response_serializer_class(inner_type, field_name)
+        return serializer_class(**kwargs)
+    if origin is list:
+        child_field = build_response_list_child_field(inner_type, field_name)
+        return serializers.ListField(child=child_field, **kwargs)
+
+    raise_unsupported_response_field_type(field_name, inner_type, dataclass_field)
+    raise AssertionError("raise_unsupported_response_field_type should always raise.")
+
+
+def build_response_list_child_field(
+    list_type: Any,
+    field_name: str,
+) -> serializers.Field:
+    """Build a response ListField child, including nested dataclass children."""
+    child_type = first_type_argument_or_any(list_type)
+    inner_type, allow_null = unwrap_optional_type(child_type)
+    if allow_null:
+        msg = f"List response field {field_name!r} cannot use optional child values."
+        raise TypeError(msg)
+    if is_dataclass_type(inner_type):
+        serializer_class = nested_response_serializer_class(inner_type, field_name)
+        return serializer_class(read_only=True)
+    if get_origin(inner_type) is not None:
+        msg = f"Nested list response field {field_name!r} is not supported."
+        raise TypeError(msg)
+    return build_response_serializer_field(inner_type, field_name)
+
+
+def nested_response_serializer_class(
+    dataclass_type: type[Any],
+    field_name: str,
+) -> type[serializers.Serializer]:
+    """Return a named serializer for one nested response dataclass."""
+    serializer_name = f"{dataclass_type.__name__}Serializer"
+    return build_response_serializer_from_dataclass(
+        dataclass_type,
+        name=serializer_name or f"{field_name.title()}ResponseSerializer",
+    )
+
+
+def response_field_kwargs(*, allow_null: bool) -> dict[str, Any]:
+    """Return keyword arguments shared by generated response fields."""
+    return {"read_only": True, "required": False, "allow_null": allow_null}
+
+
+def is_dataclass_type(value: object) -> bool:
+    """Return True when a type annotation points at a dataclass class."""
+    return isinstance(value, type) and is_dataclass(value)
+
+
+def validate_supported_response_dataclass_fields(dataclass_type: type[Any]) -> None:
+    """Validate that every response dataclass field can be represented in schema."""
+    ensure_dataclass_type("response dataclass", dataclass_type)
+    build_response_serializer_fields(dataclass_type)
+
+
+def raise_unsupported_response_field_type(
+    field_name: str,
+    field_type: Any,
+    dataclass_field: Field[Any] | None,
+) -> None:
+    """Raise a consistent error for unsupported response DTO field types."""
+    field_label = field_name
+    if dataclass_field is not None:
+        field_label = dataclass_field.name
+    msg = (
+        f"Unsupported response field type for {field_label!r}: {field_type!r}. "
+        "Supported response types are str, int, float, bool, date, datetime, "
+        "Decimal, UUID, Optional[T], list[T], and nested dataclasses."
+    )
+    raise TypeError(msg)
+
+
+def apply_schema_metadata(
+    viewset_class: type[ModelViewSet],
+    *,
+    model: type[models.Model],
+    response_serializer: type[serializers.Serializer],
+    create_serializer: type[serializers.Serializer],
+    update_serializer: type[serializers.Serializer],
+    patch_serializer: type[serializers.Serializer],
+    read_only: bool,
+    filter_specs: tuple[FilterSpec, ...],
+    order_specs: tuple[OrderSpec, ...],
+    custom_action_serializers: dict[str, type[serializers.Serializer]] | None = None,
+    custom_action_response_serializers: dict[str, type[serializers.Serializer]] | None = None,
+) -> None:
+    """Attach serializer metadata useful to DRF and optional schema tools."""
+    setattr(viewset_class, "response_serializer_class", response_serializer)
+    setattr(
+        viewset_class,
+        "request_serializer_classes",
+        request_serializers_for_mode(
+            create_serializer=create_serializer,
+            update_serializer=update_serializer,
+            patch_serializer=patch_serializer,
+            read_only=read_only,
+        ),
+    )
+    apply_drf_spectacular_metadata(
+        viewset_class,
+        model=model,
+        response_serializer=response_serializer,
+        create_serializer=create_serializer,
+        update_serializer=update_serializer,
+        patch_serializer=patch_serializer,
+        read_only=read_only,
+        filter_specs=filter_specs,
+        order_specs=order_specs,
+        custom_action_serializers=custom_action_serializers or {},
+        custom_action_response_serializers=custom_action_response_serializers or {},
+    )
+
+
+def request_serializers_for_mode(
+    *,
+    create_serializer: type[serializers.Serializer],
+    update_serializer: type[serializers.Serializer],
+    patch_serializer: type[serializers.Serializer],
+    read_only: bool,
+) -> dict[str, type[serializers.Serializer]]:
+    """Return action-specific request serializer metadata."""
+    if read_only:
+        return {}
+    return {
+        "create": create_serializer,
+        "update": update_serializer,
+        "partial_update": patch_serializer,
+    }
+
+
+def apply_drf_spectacular_metadata(
+    viewset_class: type[ModelViewSet],
+    *,
+    model: type[models.Model],
+    response_serializer: type[serializers.Serializer],
+    create_serializer: type[serializers.Serializer],
+    update_serializer: type[serializers.Serializer],
+    patch_serializer: type[serializers.Serializer],
+    read_only: bool,
+    filter_specs: tuple[FilterSpec, ...],
+    order_specs: tuple[OrderSpec, ...],
+    custom_action_serializers: dict[str, type[serializers.Serializer]],
+    custom_action_response_serializers: dict[str, type[serializers.Serializer]],
+) -> None:
+    """Decorate generated actions when drf-spectacular is installed.
+
+    CRUDFactory does not require drf-spectacular at runtime.  When users install
+    it, this optional decorator path provides separate request/response schemas
+    for write actions and documents generated query parameters for list actions.
+    """
+    try:
+        from drf_spectacular.utils import OpenApiParameter, extend_schema
+    except ImportError:
+        return
+
+    list_parameters = list_parameters_for_schema(
+        filter_specs=filter_specs,
+        order_specs=order_specs,
+        OpenApiParameter=OpenApiParameter,
+    )
+    viewset_class.list = extend_schema(
+        parameters=list_parameters,
+        responses=response_serializer(many=True),
+    )(viewset_class.list)
+    viewset_class.retrieve = extend_schema(
+        responses=response_serializer,
+    )(viewset_class.retrieve)
+    if read_only:
+        decorate_custom_actions(
+            viewset_class=viewset_class,
+            custom_action_serializers=custom_action_serializers,
+            custom_action_response_serializers=custom_action_response_serializers,
+            extend_schema=extend_schema,
+        )
+        return
+
+    viewset_class.create = extend_schema(
+        request=create_serializer,
+        responses={201: response_serializer},
+    )(viewset_class.create)
+    viewset_class.update = extend_schema(
+        request=update_serializer,
+        responses=response_serializer,
+    )(viewset_class.update)
+    viewset_class.partial_update = extend_schema(
+        request=patch_serializer,
+        responses=response_serializer,
+    )(viewset_class.partial_update)
+    decorate_custom_actions(
+        viewset_class=viewset_class,
+        custom_action_serializers=custom_action_serializers,
+        custom_action_response_serializers=custom_action_response_serializers,
+        extend_schema=extend_schema,
+    )
+
+
+def decorate_custom_actions(
+    *,
+    viewset_class: type[ModelViewSet],
+    custom_action_serializers: dict[str, type[serializers.Serializer]],
+    custom_action_response_serializers: dict[str, type[serializers.Serializer]],
+    extend_schema: Any,
+) -> None:
+    """Decorate typed custom actions with request/response schemas."""
+    for action_name, request_serializer in custom_action_serializers.items():
+        response_serializer = custom_action_response_serializers[action_name]
+        action_method = getattr(viewset_class, action_name)
+        setattr(
+            viewset_class,
+            action_name,
+            extend_schema(
+                request=request_serializer,
+                responses=response_serializer,
+            )(action_method),
+        )
+
+
+def list_parameters_for_schema(
+    *,
+    filter_specs: tuple[FilterSpec, ...],
+    order_specs: tuple[OrderSpec, ...],
+    OpenApiParameter: type[Any],
+) -> list[Any]:
+    """Return OpenAPI query parameters for generated list filters/orderings."""
+    parameters = [
+        OpenApiParameter(
+            name=filter_spec.query_param,
+            type=str,
+            location=OpenApiParameter.QUERY,
+            required=False,
+            description=f"Filter by `{filter_spec.lookup}`.",
+        )
+        for filter_spec in filter_specs
+    ]
+    if order_specs:
+        allowed_ordering = ", ".join(order_spec.query_name for order_spec in order_specs)
+        parameters.append(
+            OpenApiParameter(
+                name=ORDERING_QUERY_PARAM,
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description=(
+                    "Comma-separated ordering fields. Prefix with '-' for "
+                    f"descending order. Allowed fields: {allowed_ordering}."
+                ),
+            )
+        )
+    return parameters

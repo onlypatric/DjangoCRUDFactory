@@ -1,0 +1,9 @@
+{
+  "typeCheckingMode": "basic",
+  "include": ["src", "tests"],
+  "exclude": [".venv", "build", "dist"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "reportMissingTypeStubs": "none"
+}
