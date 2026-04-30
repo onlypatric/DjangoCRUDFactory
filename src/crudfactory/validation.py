@@ -6,13 +6,21 @@ from typing import cast, get_type_hints
 from django.db import models
 
 from .acl import ACLConfig
-from .actions import CustomActionSpec
+from .actions import (
+    CustomActionSpec,
+    GroupedCollectionActionSpec,
+    GroupedCollectionSourceACL,
+)
 from .dataclass_serializers import (
     ensure_dataclass_type,
     validate_partial_update_dataclass,
     validate_supported_dataclass_fields,
 )
 from .schema import validate_supported_response_dataclass_fields
+from .source_queries import (
+    source_filter_specs_from_dataclass,
+    source_order_specs_from_dataclass,
+)
 from .types import (
     CreateDTO,
     CreateHandler,
@@ -39,6 +47,7 @@ def validate_factory_configuration(
     update_handler: UpdateHandler[M, UpdateDTO] | None,
     partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
     custom_actions: tuple[CustomActionSpec[M], ...],
+    grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
     acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None,
     app_name: str,
     route: str,
@@ -55,7 +64,8 @@ def validate_factory_configuration(
     validate_callable("response_mapper", response_mapper)
     validate_response_mapper_dataclass(response_mapper)
     validate_custom_actions(custom_actions)
-    validate_acl_configuration(acl, custom_actions)
+    validate_grouped_actions(grouped_actions)
+    validate_acl_configuration(acl, custom_actions, grouped_actions)
     validate_non_empty_string("app_name", app_name)
     validate_non_empty_string("route", route)
     validate_non_empty_string("basename", basename)
@@ -159,11 +169,39 @@ def validate_custom_actions(
         validate_callable(f"custom action {custom_action.name} handler", custom_action.handler)
 
 
+def validate_grouped_actions(
+    grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
+) -> None:
+    """Validate grouped action query/response contracts and methods."""
+    seen_names: set[str] = set()
+    for grouped_action in grouped_actions:
+        validate_non_empty_string("grouped action name", grouped_action.name)
+        if grouped_action.name in seen_names:
+            msg = f"Duplicate grouped action name {grouped_action.name!r}."
+            raise ValueError(msg)
+        seen_names.add(grouped_action.name)
+        validate_input_dataclass(
+            f"grouped action {grouped_action.name} query_dataclass",
+            grouped_action.query_dataclass,
+        )
+        validate_supported_response_dataclass_fields(grouped_action.response_dataclass)
+        validate_callable(
+            f"grouped action {grouped_action.name} handler",
+            grouped_action.handler,
+        )
+        validate_grouped_action_methods(grouped_action)
+        source_filter_specs_from_dataclass(grouped_action.query_dataclass)
+        source_order_specs_from_dataclass(grouped_action.query_dataclass)
+        validate_grouped_action_source_acl(grouped_action.source_acl)
+
+
 def validate_acl_configuration(
     acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None,
     custom_actions: tuple[CustomActionSpec[M], ...],
+    grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
 ) -> None:
     """Validate generic ACL configuration shared by every generated endpoint."""
+    validate_grouped_action_acl_runtime_requirements(acl, grouped_actions)
     if acl is None:
         return
     validate_acl_action_name("list_action", acl.list_action)
@@ -276,6 +314,70 @@ def validate_custom_action_acl_runtime_requirements(
             msg = (
                 f"Scoped collection custom action {custom_action.name!r} requires "
                 "acl_resource_ref_resolver."
+            )
+            raise TypeError(msg)
+
+
+def validate_grouped_action_methods(
+    grouped_action: GroupedCollectionActionSpec[M],
+) -> None:
+    """Ensure grouped actions stay within the v1 GET-only contract."""
+    if tuple(grouped_action.methods) != ("get",):
+        msg = (
+            f"Grouped action {grouped_action.name!r} only supports "
+            "methods=('get',) in v1."
+        )
+        raise ValueError(msg)
+
+
+def validate_grouped_action_source_acl(
+    source_acl: GroupedCollectionSourceACL[M] | None,
+) -> None:
+    """Validate one grouped action source ACL block if present."""
+    if source_acl is None:
+        return
+    if not source_acl.permission:
+        msg = "grouped action source_acl.permission must be a non-empty string."
+        raise ValueError(msg)
+    if source_acl.mode not in ("global", "scoped", "disabled"):
+        msg = "grouped action source_acl.mode must be 'global', 'scoped', or 'disabled'."
+        raise ValueError(msg)
+    if source_acl.list_filter_mode not in ("filter", "forbid"):
+        msg = "grouped action source_acl.list_filter_mode must be 'filter' or 'forbid'."
+        raise ValueError(msg)
+    validate_optional_callable(
+        "grouped action source_acl.resource_ref_from_instance",
+        source_acl.resource_ref_from_instance,
+    )
+    validate_optional_callable(
+        "grouped action source_acl.queryset_filter",
+        source_acl.queryset_filter,
+    )
+
+
+def validate_grouped_action_acl_runtime_requirements(
+    acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None,
+    grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
+) -> None:
+    """Validate grouped source ACL blocks against the factory-level ACL backend."""
+    for grouped_action in grouped_actions:
+        source_acl = grouped_action.source_acl
+        if source_acl is None or source_acl.mode == "disabled":
+            continue
+        if acl is None:
+            msg = (
+                f"Grouped action {grouped_action.name!r} uses source_acl, "
+                "but the factory does not define acl."
+            )
+            raise TypeError(msg)
+        if (
+            source_acl.mode == "scoped"
+            and source_acl.resource_ref_from_instance is None
+            and source_acl.queryset_filter is None
+        ):
+            msg = (
+                f"Grouped action {grouped_action.name!r} scoped source_acl "
+                "requires resource_ref_from_instance or queryset_filter."
             )
             raise TypeError(msg)
 

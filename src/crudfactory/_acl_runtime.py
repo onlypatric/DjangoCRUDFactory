@@ -7,7 +7,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.request import Request
 
 from .acl import ACLActionConfig, ACLBackend, ACLConfig
-from .actions import CustomActionSpec
+from .actions import CustomActionSpec, GroupedCollectionSourceACL
 from .types import CreateDTO, M, PatchDTO, UpdateDTO
 
 __all__: list[str] = []
@@ -56,6 +56,53 @@ def filter_collection_for_acl(
         raise PermissionDenied("ACL list filtering requires a resource resolver.")
     msg = (
         "Scoped list ACL requires resource_ref_from_instance or queryset_filter."
+    )
+    raise TypeError(msg)
+
+
+def filter_grouped_collection_for_acl(
+    *,
+    queryset: models.QuerySet[M],
+    request: Request,
+    acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None,
+    source_acl: GroupedCollectionSourceACL[M] | None,
+) -> models.QuerySet[M] | Sequence[M]:
+    """Return grouped-action source rows filtered by per-row scoped ACL."""
+    if source_acl is None or source_acl.mode == "disabled":
+        return queryset
+    if acl is None:
+        msg = "Grouped source ACL requires a factory-level acl configuration."
+        raise TypeError(msg)
+    actor = acl.actor_resolver(request)
+    if source_acl.mode == "global":
+        if not acl.backend.has_permission(actor, source_acl.permission):
+            raise PermissionDenied("You do not have permission to perform this action.")
+        return queryset
+    if source_acl.queryset_filter is not None:
+        return cast(
+            models.QuerySet[M] | Sequence[M],
+            source_acl.queryset_filter(
+                queryset,
+                actor,
+                source_acl.permission,
+                source_acl.resource_ref_from_instance,
+            ),
+        )
+    if source_acl.resource_ref_from_instance is not None:
+        return [
+            instance
+            for instance in queryset
+            if acl.backend.has_permission_on_resource(
+                actor,
+                source_acl.permission,
+                source_acl.resource_ref_from_instance(instance),
+            )
+        ]
+    if source_acl.list_filter_mode == "forbid":
+        raise PermissionDenied("Grouped source ACL requires a resource resolver.")
+    msg = (
+        "Scoped grouped source ACL requires resource_ref_from_instance "
+        "or queryset_filter."
     )
     raise TypeError(msg)
 

@@ -14,6 +14,7 @@ from ._simple_writes import (
 )
 from .filters import FILTER_METADATA_KEY, FilterDeclaration
 from .ordering import ORDERING_QUERY_PARAM, ORDER_METADATA_KEY
+from .source_queries import SOURCE_FILTER_METADATA_KEY, SOURCE_ORDER_METADATA_KEY
 from .stats import STAT_METADATA_KEY, AggregateStatDeclaration
 from .validators import (
     CHOICES_METADATA_KEY,
@@ -65,6 +66,10 @@ def render_factory_markdown(
     lines.append("## Custom Actions")
     lines.append("")
     lines.extend(custom_action_lines(factory))
+    lines.append("")
+    lines.append("## Grouped Collection Actions")
+    lines.append("")
+    lines.extend(grouped_action_lines(factory))
     return "\n".join(lines).strip() + "\n"
 
 
@@ -115,6 +120,10 @@ def endpoint_lines(
         action_path = f"{action_path}{custom_action.url_path or custom_action.name}/"
         methods = ", ".join(method.upper() for method in custom_action.methods)
         lines.append(f"- `{methods} {action_path}`: {custom_action.name}")
+    for grouped_action in getattr(factory, "grouped_actions", ()):
+        action_path = f"{route_path}{grouped_action.url_path or grouped_action.name}/"
+        methods = ", ".join(method.upper() for method in grouped_action.methods)
+        lines.append(f"- `{methods} {action_path}`: grouped {grouped_action.name}")
     return lines
 
 
@@ -278,6 +287,34 @@ def custom_action_lines(factory: CRUDFactory[Any, Any, Any, Any, Any]) -> list[s
     return trim_trailing_blank(lines)
 
 
+def grouped_action_lines(factory: CRUDFactory[Any, Any, Any, Any, Any]) -> list[str]:
+    grouped_actions = getattr(factory, "grouped_actions", ())
+    if not grouped_actions:
+        return ["This factory does not declare grouped collection actions."]
+
+    lines: list[str] = []
+    for grouped_action in grouped_actions:
+        lines.append(f"### `{grouped_action.name}`")
+        lines.append("")
+        lines.append("- Scope: `collection`")
+        lines.append(
+            f"- Methods: `{', '.join(method.upper() for method in grouped_action.methods)}`"
+        )
+        if grouped_action.source_acl is not None:
+            lines.append(
+                f"- Source ACL: `{grouped_action.source_acl.mode}` on permission "
+                f"`{grouped_action.source_acl.permission}`"
+            )
+        lines.append("- Query DTO:")
+        lines.extend(indent_lines(dataclass_section_lines(grouped_action.query_dataclass)))
+        lines.append("- Response DTO:")
+        lines.extend(
+            indent_lines(dataclass_section_lines(grouped_action.response_dataclass))
+        )
+        lines.append("")
+    return trim_trailing_blank(lines)
+
+
 def dataclass_section_lines(dataclass_type: type[Any]) -> list[str]:
     type_hints = get_type_hints(dataclass_type)
     lines = [f"### `{dataclass_type.__name__}`", ""]
@@ -318,12 +355,25 @@ def field_metadata_lines(dataclass_field: Field[Any]) -> list[str]:
             lines.append(
                 f"Filterable: `{lookup}` with lookups `{', '.join(declaration.lookups)}`"
             )
+    if SOURCE_FILTER_METADATA_KEY in metadata:
+        declaration = metadata[SOURCE_FILTER_METADATA_KEY]
+        if isinstance(declaration, FilterDeclaration):
+            lookup = declaration.lookup or dataclass_field.name
+            lines.append(
+                f"Source filterable: `{lookup}` with lookups `{', '.join(declaration.lookups)}`"
+            )
     if ORDER_METADATA_KEY in metadata:
         raw_order = metadata[ORDER_METADATA_KEY]
         if raw_order is True:
             lines.append(f"Orderable: `{dataclass_field.name}`")
         elif isinstance(raw_order, str):
             lines.append(f"Orderable: `{raw_order}`")
+    if SOURCE_ORDER_METADATA_KEY in metadata:
+        raw_order = metadata[SOURCE_ORDER_METADATA_KEY]
+        if raw_order is True:
+            lines.append(f"Source orderable: `{dataclass_field.name}`")
+        elif isinstance(raw_order, str):
+            lines.append(f"Source orderable: `{raw_order}`")
     if STAT_METADATA_KEY in metadata:
         declaration = metadata[STAT_METADATA_KEY]
         if isinstance(declaration, AggregateStatDeclaration):

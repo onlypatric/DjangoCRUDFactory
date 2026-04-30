@@ -13,6 +13,7 @@ from .factories import (
     location_detail_factory,
     location_factory,
     location_summary_factory,
+    monitoring_item_factory,
 )
 
 
@@ -38,6 +39,11 @@ FACTORY_DOCS: tuple[FactoryDocEntry, ...] = (
         slug="connector-crud",
         title="Connector CRUD Factory",
         factory=connector_factory,
+    ),
+    FactoryDocEntry(
+        slug="monitoring-item-readonly",
+        title="Monitoring Item ReadOnly Factory",
+        factory=monitoring_item_factory,
     ),
     FactoryDocEntry(
         slug="v3-station-summary",

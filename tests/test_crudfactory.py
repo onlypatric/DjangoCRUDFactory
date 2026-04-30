@@ -45,8 +45,10 @@ from crudfactory import (
     ACLConfig,
     ACLBackend,
     CRUDFactory,
+    GroupedCollectionSourceACL,
     avg_stat,
     choices,
+    grouped_collection_action,
     count_stat,
     filterable,
     length,
@@ -56,6 +58,8 @@ from crudfactory import (
     orderable,
     range_,
     regex,
+    source_filterable,
+    source_orderable,
     sum_stat,
 )
 from crudfactory.acl_tables import ensure_acl_tables_exist
@@ -335,6 +339,39 @@ class InvalidNestedWrapperResponseDTO:
     nested: InvalidNestedResponseDTO
 
 
+@dataclass
+class WidgetGroupQueryDTO:
+    name: str | None = field(
+        default=None,
+        metadata=source_filterable(lookups=("exact", "icontains")),
+    )
+    count: int | None = field(
+        default=None,
+        metadata=source_filterable(lookups=("gte", "lte")),
+    )
+    label: str | None = field(
+        default=None,
+        metadata=source_orderable("name"),
+    )
+
+
+@dataclass
+class WidgetGroupItemDTO:
+    id: int
+    name: str
+
+
+@dataclass
+class WidgetGroupBucketDTO:
+    label: str
+    items: list[WidgetGroupItemDTO]
+
+
+@dataclass
+class WidgetGroupResponseDTO:
+    buckets: list[WidgetGroupBucketDTO]
+
+
 class CustomPermission(BasePermission):
     pass
 
@@ -350,6 +387,21 @@ class FakeACLBackend(ACLBackend):
         resource_ref: object,
     ) -> bool:
         return True
+
+
+class SelectiveACLBackend(ACLBackend):
+    def has_permission(self, actor: object, permission: str) -> bool:
+        _ = actor, permission
+        return True
+
+    def has_permission_on_resource(
+        self,
+        actor: object,
+        permission: str,
+        resource_ref: object,
+    ) -> bool:
+        _ = actor, permission
+        return resource_ref == "allowed"
 
 
 def widget_to_response(widget: Widget) -> WidgetResponseDTO:
@@ -392,6 +444,23 @@ def pattern_names(patterns: Sequence[URLPattern | URLResolver]) -> set[str]:
         for pattern in patterns
         if isinstance(pattern, URLPattern) and pattern.name is not None
     }
+
+
+def widget_group_response(
+    widgets: models.QuerySet[Widget] | Sequence[Widget],
+    _query: WidgetGroupQueryDTO,
+) -> WidgetGroupResponseDTO:
+    return WidgetGroupResponseDTO(
+        buckets=[
+            WidgetGroupBucketDTO(
+                label="all",
+                items=[
+                    WidgetGroupItemDTO(id=cast(int, widget.pk), name=widget.name)
+                    for widget in widgets
+                ],
+            )
+        ]
+    )
 
 
 class CRUDFactoryTests(unittest.TestCase):
@@ -441,6 +510,36 @@ class CRUDFactoryTests(unittest.TestCase):
             "create_input": SimpleWidgetCreateDTO,
             "update_input": SimpleWidgetUpdateDTO,
             "partial_update_input": SimpleWidgetPatchDTO,
+        }
+        config.update(overrides)
+        return CRUDFactory(**config)
+
+    def build_grouped_factory(self, **overrides: object) -> CRUDFactory:
+        config = {
+            "model": Widget,
+            "response_mapper": widget_to_response,
+            "queryset": Widget.objects.order_by("id"),
+            "read_only": True,
+            "grouped_actions": (
+                grouped_collection_action(
+                    name="grouped",
+                    query_dataclass=WidgetGroupQueryDTO,
+                    response_dataclass=WidgetGroupResponseDTO,
+                    handler=widget_group_response,
+                    source_acl=GroupedCollectionSourceACL(
+                        permission="app.widgets.read",
+                        resource_ref_from_instance=lambda widget: (
+                            "allowed"
+                            if cast(Widget, widget).name.startswith("allow")
+                            else "denied"
+                        ),
+                    ),
+                ),
+            ),
+            "acl": ACLConfig(
+                backend=SelectiveACLBackend(),
+                actor_resolver=lambda request: "actor",
+            ),
         }
         config.update(overrides)
         return CRUDFactory(**config)
@@ -703,6 +802,151 @@ class CRUDFactoryTests(unittest.TestCase):
         self.assertIn('  "detail": "Locked connectors cannot be started."', markdown)
         self.assertIn("Filterable: `name`", markdown)
         self.assertIn("Orderable: `count`", markdown)
+
+    def test_grouped_action_registration_returns_collection_route(self) -> None:
+        viewset_class = self.build_grouped_factory().get_viewset_class()
+
+        response = viewset_class.as_view({"get": "grouped"})(
+            self.request_factory.get("/widgets/grouped/")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, {"buckets": [{"label": "all", "items": []}]})
+
+    def test_grouped_action_reads_query_dto_from_query_params(self) -> None:
+        captured: list[WidgetGroupQueryDTO] = []
+
+        def handler(
+            widgets: models.QuerySet[Widget] | Sequence[Widget],
+            query: WidgetGroupQueryDTO,
+        ) -> WidgetGroupResponseDTO:
+            _ = widgets
+            captured.append(query)
+            return WidgetGroupResponseDTO(buckets=[])
+
+        viewset_class = self.build_grouped_factory(
+            grouped_actions=(
+                grouped_collection_action(
+                    name="grouped",
+                    query_dataclass=WidgetGroupQueryDTO,
+                    response_dataclass=WidgetGroupResponseDTO,
+                    handler=handler,
+                ),
+            )
+        ).get_viewset_class()
+
+        response = viewset_class.as_view({"get": "grouped"})(
+            self.request_factory.get("/widgets/grouped/?name=alpha&count=3&label=beta")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            captured,
+            [WidgetGroupQueryDTO(name="alpha", count=3, label="beta")],
+        )
+
+    def test_grouped_action_applies_source_filter_and_order_specs(self) -> None:
+        Widget.objects.create(name="beta", count=1)
+        Widget.objects.create(name="alpha", count=9)
+        Widget.objects.create(name="alphabet", count=8)
+        captured_names: list[str] = []
+
+        def handler(
+            widgets: models.QuerySet[Widget] | Sequence[Widget],
+            query: WidgetGroupQueryDTO,
+        ) -> WidgetGroupResponseDTO:
+            _ = query
+            captured_names.extend(widget.name for widget in widgets)
+            return WidgetGroupResponseDTO(buckets=[])
+
+        viewset_class = self.build_grouped_factory(
+            grouped_actions=(
+                grouped_collection_action(
+                    name="grouped",
+                    query_dataclass=WidgetGroupQueryDTO,
+                    response_dataclass=WidgetGroupResponseDTO,
+                    handler=handler,
+                ),
+            ),
+            acl=ACLConfig(backend=FakeACLBackend(), actor_resolver=lambda request: "actor"),
+        ).get_viewset_class()
+
+        response = viewset_class.as_view({"get": "grouped"})(
+            self.request_factory.get(
+                "/widgets/grouped/?name__icontains=alpha&ordering=-label"
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured_names, ["alphabet", "alpha"])
+
+    def test_grouped_action_filters_unauthorized_source_rows_before_grouping(self) -> None:
+        Widget.objects.create(name="allow-one", count=1)
+        Widget.objects.create(name="deny-two", count=2)
+        captured_names: list[str] = []
+
+        def handler(
+            widgets: models.QuerySet[Widget] | Sequence[Widget],
+            query: WidgetGroupQueryDTO,
+        ) -> WidgetGroupResponseDTO:
+            _ = query
+            captured_names.extend(widget.name for widget in widgets)
+            return WidgetGroupResponseDTO(buckets=[])
+
+        viewset_class = self.build_grouped_factory(
+            grouped_actions=(
+                grouped_collection_action(
+                    name="grouped",
+                    query_dataclass=WidgetGroupQueryDTO,
+                    response_dataclass=WidgetGroupResponseDTO,
+                    handler=handler,
+                    source_acl=GroupedCollectionSourceACL(
+                        permission="app.widgets.read",
+                        resource_ref_from_instance=lambda widget: (
+                            "allowed"
+                            if cast(Widget, widget).name.startswith("allow")
+                            else "denied"
+                        ),
+                    ),
+                ),
+            )
+        ).get_viewset_class()
+
+        response = viewset_class.as_view({"get": "grouped"})(
+            self.request_factory.get("/widgets/grouped/")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured_names, ["allow-one"])
+
+    def test_grouped_action_markdown_docs_include_query_and_response_contracts(self) -> None:
+        markdown = self.build_grouped_factory(route="widgets").render_markdown_docs(
+            title="Widget Factory",
+            base_path="/api",
+        )
+
+        self.assertIn("## Grouped Collection Actions", markdown)
+        self.assertIn("`GET /api/widgets/grouped/`", markdown)
+        self.assertIn("`WidgetGroupQueryDTO`", markdown)
+        self.assertIn("`WidgetGroupResponseDTO`", markdown)
+
+    def test_grouped_action_requires_factory_acl_when_source_acl_is_used(self) -> None:
+        with self.assertRaisesRegex(TypeError, "uses source_acl, but the factory does not define acl"):
+            self.build_grouped_factory(acl=None)
+
+    def test_grouped_action_rejects_non_get_methods(self) -> None:
+        with self.assertRaisesRegex(ValueError, "only supports methods=\\('get',\\)"):
+            self.build_grouped_factory(
+                grouped_actions=(
+                    grouped_collection_action(
+                        name="grouped",
+                        query_dataclass=WidgetGroupQueryDTO,
+                        response_dataclass=WidgetGroupResponseDTO,
+                        handler=widget_group_response,
+                        methods=("post",),
+                    ),
+                )
+            )
 
     def test_app_defaults_use_model_app_label_and_model_name(self) -> None:
         factory = self.build_factory()

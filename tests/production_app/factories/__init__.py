@@ -21,6 +21,7 @@ from .location_factory import (
     location_detail_factory,
     location_summary_factory,
 )
+from .monitoring_factory import monitoring_item_factory
 
 __all__ = [
     "ChargepointDetailViewSet",
@@ -38,4 +39,5 @@ __all__ = [
     "location_factory",
     "location_detail_factory",
     "location_summary_factory",
+    "monitoring_item_factory",
 ]

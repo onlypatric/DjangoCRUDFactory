@@ -22,7 +22,14 @@ from crudfactory.models import (
 )
 from rest_framework.test import APIClient
 
-from .models import Chargepoint, Connector, Location
+from .models import (
+    Chargepoint,
+    Connector,
+    Location,
+    MonitoringHost,
+    MonitoringItem,
+    MonitoringStation,
+)
 
 
 class ACLBootstrapCommandTests(TestCase):
@@ -695,6 +702,154 @@ class ConnectorACLIntegrationTests(TestCase):
         self.assertEqual(start_response.status_code, 200)
         self.assertEqual(stop_response.status_code, 200)
         self.assertEqual(denied_response.status_code, 404)
+
+
+class MonitoringGroupedActionIntegrationTests(TestCase):
+    client: APIClient
+
+    def setUp(self) -> None:
+        self.client = APIClient()
+        user_manager = cast(Any, get_user_model().objects)
+        self.reader = user_manager.create_user("monitor-reader", password="test-pass")
+        AclPermission.objects.get_or_create(
+            permission_key="app.monitoring.items.read",
+            defaults={
+                "domain": "monitoring",
+                "action": "read",
+                "resource_type": "monitoring_item",
+            },
+        )
+
+    def create_monitoring_item(
+        self,
+        *,
+        station_name: str,
+        host_name: str,
+        item_name: str,
+        exclude_from_summary: bool = False,
+    ) -> MonitoringItem:
+        station, _ = MonitoringStation.objects.get_or_create(name=station_name)
+        host, _ = MonitoringHost.objects.get_or_create(
+            station=station,
+            name=host_name,
+        )
+        item = MonitoringItem.objects.create(
+            host=host,
+            name=item_name,
+            units="kW",
+            exclude_from_station_summary=exclude_from_summary,
+        )
+        self.ensure_monitoring_resource_node(item)
+        return item
+
+    def ensure_monitoring_resource_node(self, item: MonitoringItem) -> None:
+        station_node, _ = AclResourceNode.objects.get_or_create(
+            resource_type="monitoring_station",
+            resource_key=item.host.station.name,
+        )
+        host_node, _ = AclResourceNode.objects.get_or_create(
+            resource_type="monitoring_host",
+            resource_key=f"{item.host.station.name}/{item.host.name}",
+            defaults={"parent": station_node},
+        )
+        if host_node.parent is None or host_node.parent.pk != station_node.pk:
+            host_node.parent = station_node
+            host_node.save(update_fields=["parent"])
+        item_node, _ = AclResourceNode.objects.get_or_create(
+            resource_type="monitoring_item",
+            resource_key=f"monitoring_item:{item.itemid}",
+            defaults={"parent": host_node},
+        )
+        if item_node.parent is None or item_node.parent.pk != host_node.pk:
+            item_node.parent = host_node
+            item_node.save(update_fields=["parent"])
+        ACLBootstrapper().rebuild_resource_closure()
+
+    def grant_read(self, item: MonitoringItem) -> None:
+        AclGrant.objects.create(
+            subject_kind=AclSubjectKind.USER,
+            subject_user=self.reader,
+            permission=AclPermission.objects.get(permission_key="app.monitoring.items.read"),
+            resource=AclResourceNode.objects.get(
+                resource_type="monitoring_item",
+                resource_key=f"monitoring_item:{item.itemid}",
+            ),
+            effect=AclEffect.ALLOW,
+        )
+
+    def test_grouped_monitoring_endpoint_filters_by_acl_before_grouping(self) -> None:
+        allowed = self.create_monitoring_item(
+            station_name="Rome Station",
+            host_name="Host A",
+            item_name="Allowed Item",
+        )
+        self.create_monitoring_item(
+            station_name="Rome Station",
+            host_name="Host A",
+            item_name="Hidden Item",
+        )
+        self.grant_read(allowed)
+
+        self.client.force_authenticate(user=self.reader)
+        response = self.client.get("/api/monitoring-items/station-summary/", format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data,
+            {
+                "stations": [
+                    {
+                        "id": allowed.host.station_id,
+                        "name": "Rome Station",
+                        "hosts": [
+                            {
+                                "id": allowed.host_id,
+                                "name": "Host A",
+                                "items": [
+                                    {
+                                        "id": allowed.itemid,
+                                        "name": "Allowed Item",
+                                        "units": "kW",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+
+    def test_grouped_monitoring_endpoint_applies_source_filters_and_ordering(self) -> None:
+        first = self.create_monitoring_item(
+            station_name="Milan Station",
+            host_name="Host Z",
+            item_name="Alpha Item",
+        )
+        second = self.create_monitoring_item(
+            station_name="Milan Station",
+            host_name="Host Z",
+            item_name="Alphabet Item",
+        )
+        hidden = self.create_monitoring_item(
+            station_name="Milan Station",
+            host_name="Host Z",
+            item_name="Excluded Item",
+            exclude_from_summary=True,
+        )
+        self.grant_read(first)
+        self.grant_read(second)
+        self.grant_read(hidden)
+
+        self.client.force_authenticate(user=self.reader)
+        response = self.client.get(
+            "/api/monitoring-items/station-summary/?item_name__icontains=Alpha&ordering=-itemid",
+            format="json",
+        )
+
+        items = response.data["stations"][0]["hosts"][0]["items"]
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["name"] for item in items], ["Alphabet Item", "Alpha Item"])
+        self.assertNotIn("Excluded Item", [item["name"] for item in items])
 
 
 class EVSeedCommandTests(TestCase):

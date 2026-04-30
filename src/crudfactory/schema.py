@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import Field, fields, is_dataclass
+from dataclasses import Field, MISSING, fields, is_dataclass
 from decimal import Decimal
 from types import UnionType
 from typing import Any, Union, get_args, get_origin, get_type_hints
@@ -12,12 +12,18 @@ from rest_framework import serializers
 from rest_framework.viewsets import ModelViewSet
 
 from .dataclass_serializers import (
+    build_serializer_fields,
     ensure_dataclass_type,
     first_type_argument_or_any,
     unwrap_optional_type,
 )
 from .filters import FilterSpec
 from .ordering import ORDERING_QUERY_PARAM, OrderSpec
+from .source_queries import (
+    query_param_names_from_dataclass,
+    source_filter_specs_from_dataclass,
+    source_order_specs_from_dataclass,
+)
 
 __all__: list[str] = []
 
@@ -183,6 +189,9 @@ def apply_schema_metadata(
     order_specs: tuple[OrderSpec, ...],
     custom_action_serializers: dict[str, type[serializers.Serializer]] | None = None,
     custom_action_response_serializers: dict[str, type[serializers.Serializer]] | None = None,
+    grouped_actions: tuple[Any, ...] = (),
+    grouped_action_serializers: dict[str, type[serializers.Serializer]] | None = None,
+    grouped_action_response_serializers: dict[str, type[serializers.Serializer]] | None = None,
 ) -> None:
     """Attach serializer metadata useful to DRF and optional schema tools."""
     setattr(viewset_class, "response_serializer_class", response_serializer)
@@ -208,6 +217,9 @@ def apply_schema_metadata(
         order_specs=order_specs,
         custom_action_serializers=custom_action_serializers or {},
         custom_action_response_serializers=custom_action_response_serializers or {},
+        grouped_actions=grouped_actions,
+        grouped_action_serializers=grouped_action_serializers or {},
+        grouped_action_response_serializers=grouped_action_response_serializers or {},
     )
 
 
@@ -241,6 +253,9 @@ def apply_drf_spectacular_metadata(
     order_specs: tuple[OrderSpec, ...],
     custom_action_serializers: dict[str, type[serializers.Serializer]],
     custom_action_response_serializers: dict[str, type[serializers.Serializer]],
+    grouped_actions: tuple[Any, ...],
+    grouped_action_serializers: dict[str, type[serializers.Serializer]],
+    grouped_action_response_serializers: dict[str, type[serializers.Serializer]],
 ) -> None:
     """Decorate generated actions when drf-spectacular is installed.
 
@@ -272,6 +287,13 @@ def apply_drf_spectacular_metadata(
             custom_action_response_serializers=custom_action_response_serializers,
             extend_schema=extend_schema,
         )
+        decorate_grouped_actions(
+            viewset_class=viewset_class,
+            grouped_actions=grouped_actions,
+            grouped_action_response_serializers=grouped_action_response_serializers,
+            OpenApiParameter=OpenApiParameter,
+            extend_schema=extend_schema,
+        )
         return
 
     viewset_class.create = extend_schema(
@@ -292,6 +314,13 @@ def apply_drf_spectacular_metadata(
         custom_action_response_serializers=custom_action_response_serializers,
         extend_schema=extend_schema,
     )
+    decorate_grouped_actions(
+        viewset_class=viewset_class,
+        grouped_actions=grouped_actions,
+        grouped_action_response_serializers=grouped_action_response_serializers,
+        OpenApiParameter=OpenApiParameter,
+        extend_schema=extend_schema,
+    )
 
 
 def decorate_custom_actions(
@@ -310,6 +339,32 @@ def decorate_custom_actions(
             action_name,
             extend_schema(
                 request=request_serializer,
+                responses=response_serializer,
+            )(action_method),
+        )
+
+
+def decorate_grouped_actions(
+    *,
+    viewset_class: type[ModelViewSet],
+    grouped_actions: tuple[Any, ...],
+    grouped_action_response_serializers: dict[str, type[serializers.Serializer]],
+    OpenApiParameter: type[Any],
+    extend_schema: Any,
+) -> None:
+    """Decorate grouped collection actions with query-param schemas."""
+    for grouped_action in grouped_actions:
+        response_serializer = grouped_action_response_serializers[grouped_action.name]
+        action_method = getattr(viewset_class, grouped_action.name)
+        setattr(
+            viewset_class,
+            grouped_action.name,
+            extend_schema(
+                request=None,
+                parameters=grouped_action_parameters_for_schema(
+                    grouped_action=grouped_action,
+                    OpenApiParameter=OpenApiParameter,
+                ),
                 responses=response_serializer,
             )(action_method),
         )
@@ -347,3 +402,77 @@ def list_parameters_for_schema(
             )
         )
     return parameters
+
+
+def grouped_action_parameters_for_schema(
+    *,
+    grouped_action: Any,
+    OpenApiParameter: type[Any],
+) -> list[Any]:
+    """Return OpenAPI query parameters for one grouped collection action."""
+    parameters: list[Any] = []
+    seen_names: set[str] = set()
+    for parameter in dataclass_query_parameters_for_schema(
+        grouped_action.query_dataclass,
+        OpenApiParameter=OpenApiParameter,
+    ):
+        seen_names.add(parameter.name)
+        parameters.append(parameter)
+    for parameter in list_parameters_for_schema(
+        filter_specs=source_filter_specs_from_dataclass(grouped_action.query_dataclass),
+        order_specs=source_order_specs_from_dataclass(grouped_action.query_dataclass),
+        OpenApiParameter=OpenApiParameter,
+    ):
+        if parameter.name in seen_names:
+            continue
+        seen_names.add(parameter.name)
+        parameters.append(parameter)
+    return parameters
+
+
+def dataclass_query_parameters_for_schema(
+    dataclass_type: type[Any],
+    *,
+    OpenApiParameter: type[Any],
+) -> list[Any]:
+    """Return OpenAPI query parameters for exact-name grouped query DTO fields."""
+    ensure_dataclass_type("grouped action query dataclass", dataclass_type)
+    serializer_fields = build_serializer_fields(dataclass_type)
+    query_param_names = query_param_names_from_dataclass(dataclass_type)
+    type_hints = get_type_hints(dataclass_type)
+    parameters: list[Any] = []
+    for dataclass_field in fields(dataclass_type):
+        if dataclass_field.name not in query_param_names:
+            continue
+        serializer_field = serializer_fields[dataclass_field.name]
+        field_type = type_hints.get(dataclass_field.name, dataclass_field.type)
+        parameters.append(
+            OpenApiParameter(
+                name=dataclass_field.name,
+                type=openapi_query_type(field_type),
+                location=OpenApiParameter.QUERY,
+                required=is_required_dataclass_field(dataclass_field),
+                description=(
+                    f"Grouped action query field `{dataclass_field.name}`."
+                    if not serializer_field.help_text
+                    else str(serializer_field.help_text)
+                ),
+            )
+        )
+    return parameters
+
+
+def openapi_query_type(field_type: Any) -> Any:
+    """Return a simple OpenAPI query parameter type for one supported field type."""
+    inner_type = unwrap_optional_type(field_type)[0]
+    origin = get_origin(inner_type)
+    if origin is list:
+        return str
+    if inner_type in (str, int, float, bool, dt.date, dt.datetime, Decimal, UUID):
+        return inner_type
+    return str
+
+
+def is_required_dataclass_field(dataclass_field: Field[Any]) -> bool:
+    """Return True when a grouped query field has no default value."""
+    return dataclass_field.default is MISSING and dataclass_field.default_factory is MISSING

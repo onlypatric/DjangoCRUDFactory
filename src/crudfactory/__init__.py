@@ -4,12 +4,18 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 from .acl import ACLActionConfig, ACLBackend, ACLConfig, crud_acl
-from .actions import collection_action, detail_action
+from .actions import (
+    GroupedCollectionSourceACL,
+    collection_action,
+    detail_action,
+    grouped_collection_action,
+)
 from .factory import CRUDFactory
 from .filters import filterable
 from .ordering import orderable
 from .pagination import page_number_pagination
 from ._simple_writes import model_field
+from .source_queries import source_filterable, source_orderable
 from .stats import avg_stat, count_stat, max_stat, min_stat, sum_stat
 from .validators import choices, length, range_, regex
 
@@ -32,6 +38,7 @@ __all__ = [
     "ACLPermissionSeed",
     "ACLResourceRef",
     "ACLResourceSeed",
+    "GroupedCollectionSourceACL",
     "avg_stat",
     "choices",
     "collection_action",
@@ -41,6 +48,7 @@ __all__ = [
     "DjangoACLBackend",
     "DjangoACLService",
     "filterable",
+    "grouped_collection_action",
     "length",
     "max_stat",
     "min_stat",
@@ -49,6 +57,8 @@ __all__ = [
     "page_number_pagination",
     "range_",
     "regex",
+    "source_filterable",
+    "source_orderable",
     "sum_stat",
 ]
 

@@ -20,9 +20,10 @@ from ._acl_runtime import (
     enforce_target_patch_acl,
     enforce_target_update_acl,
     filter_collection_for_acl,
+    filter_grouped_collection_for_acl,
 )
 from .acl import ACLActionConfig, ACLConfig
-from .actions import CustomActionSpec
+from .actions import CustomActionSpec, GroupedCollectionActionSpec
 from .dataclass_serializers import build_serializer_from_dataclass
 from .filters import FilterSpec, apply_filter_specs, response_dataclass_from_mapper
 from .inputs import serializer_to_dataclass
@@ -36,6 +37,11 @@ from .stats import (
     AggregateStatSpec,
     annotate_queryset_with_stat_specs,
     instance_with_stat_annotations,
+)
+from .source_queries import (
+    query_param_names_from_dataclass,
+    source_filter_specs_from_dataclass,
+    source_order_specs_from_dataclass,
 )
 from .types import (
     CreateDTO,
@@ -63,6 +69,7 @@ def build_crud_viewset_class(
     update_handler: UpdateHandler[M, UpdateDTO] | None,
     partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
     custom_actions: tuple[CustomActionSpec[M], ...],
+    grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
     acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None,
     read_only: bool,
     queryset: models.QuerySet[M] | None,
@@ -96,6 +103,10 @@ def build_crud_viewset_class(
     custom_action_response_serializers = build_custom_action_response_serializers(
         custom_actions
     )
+    grouped_action_serializers = build_grouped_action_serializers(grouped_actions)
+    grouped_action_response_serializers = build_grouped_action_response_serializers(
+        grouped_actions
+    )
     viewset_class = create_viewset_class(
         model=model,
         response_mapper=response_mapper,
@@ -106,11 +117,13 @@ def build_crud_viewset_class(
         update_handler=update_handler,
         partial_update_handler=partial_update_handler,
         custom_actions=custom_actions,
+        grouped_actions=grouped_actions,
         acl=acl,
         read_only=read_only,
         serializers_by_action=serializers_by_action,
         custom_action_serializers=custom_action_serializers,
         custom_action_response_serializers=custom_action_response_serializers,
+        grouped_action_serializers=grouped_action_serializers,
         response_serializer=response_serializer,
         queryset=queryset,
         lookup_field=lookup_field,
@@ -131,6 +144,9 @@ def build_crud_viewset_class(
         order_specs=order_specs,
         custom_action_serializers=custom_action_serializers,
         custom_action_response_serializers=custom_action_response_serializers,
+        grouped_actions=grouped_actions,
+        grouped_action_serializers=grouped_action_serializers,
+        grouped_action_response_serializers=grouped_action_response_serializers,
     )
     apply_optional_viewset_attributes(
         viewset_class,
@@ -206,6 +222,32 @@ def build_custom_action_response_serializers(
     }
 
 
+def build_grouped_action_serializers(
+    grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
+) -> dict[str, type[serializers.Serializer]]:
+    """Generate one query serializer per grouped collection action."""
+    return {
+        grouped_action.name: build_serializer_from_dataclass(
+            grouped_action.query_dataclass,
+            name=f"{grouped_action.query_dataclass.__name__}Serializer",
+        )
+        for grouped_action in grouped_actions
+    }
+
+
+def build_grouped_action_response_serializers(
+    grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
+) -> dict[str, type[serializers.Serializer]]:
+    """Generate one response serializer per grouped collection action."""
+    return {
+        grouped_action.name: build_response_serializer_from_dataclass(
+            grouped_action.response_dataclass,
+            name=f"{grouped_action.response_dataclass.__name__}Serializer",
+        )
+        for grouped_action in grouped_actions
+    }
+
+
 def build_action_serializers_for_mode(
     *,
     model: type[M],
@@ -239,11 +281,13 @@ def create_viewset_class(
     update_handler: UpdateHandler[M, UpdateDTO] | None,
     partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
     custom_actions: tuple[CustomActionSpec[M], ...],
+    grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
     acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None,
     read_only: bool,
     serializers_by_action: dict[str, type[serializers.Serializer]],
     custom_action_serializers: dict[str, type[serializers.Serializer]],
     custom_action_response_serializers: dict[str, type[serializers.Serializer]],
+    grouped_action_serializers: dict[str, type[serializers.Serializer]],
     response_serializer: type[serializers.Serializer],
     queryset: models.QuerySet[M] | None,
     lookup_field: str,
@@ -430,6 +474,12 @@ def create_viewset_class(
         custom_action_serializers=custom_action_serializers,
         acl=acl,
     )
+    attach_grouped_collection_actions(
+        viewset_class=GeneratedCRUDViewSet,
+        grouped_actions=grouped_actions,
+        grouped_action_serializers=grouped_action_serializers,
+        acl=acl,
+    )
     name_generated_viewset(GeneratedCRUDViewSet, model)
     return GeneratedCRUDViewSet
 
@@ -449,6 +499,23 @@ def attach_custom_actions(
             acl=acl,
         )
         setattr(viewset_class, custom_action.name, action_method)
+
+
+def attach_grouped_collection_actions(
+    *,
+    viewset_class: type[ModelViewSet],
+    grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
+    grouped_action_serializers: dict[str, type[serializers.Serializer]],
+    acl: ACLConfig[M, Any, Any, Any] | None,
+) -> None:
+    """Attach grouped read-only collection action methods to the ViewSet class."""
+    for grouped_action in grouped_actions:
+        action_method = build_grouped_collection_action_method(
+            grouped_action=grouped_action,
+            serializer_class=grouped_action_serializers[grouped_action.name],
+            acl=acl,
+        )
+        setattr(viewset_class, grouped_action.name, action_method)
 
 
 def build_custom_action_method(
@@ -503,6 +570,52 @@ def build_custom_action_method(
         url_path=custom_action.url_path,
         url_name=custom_action.url_name,
     )(custom_action_method)
+
+
+def build_grouped_collection_action_method(
+    *,
+    grouped_action: GroupedCollectionActionSpec[M],
+    serializer_class: type[serializers.Serializer],
+    acl: ACLConfig[M, Any, Any, Any] | None,
+) -> Callable[..., Response]:
+    """Build one grouped read-only collection action method."""
+    source_filter_specs = source_filter_specs_from_dataclass(grouped_action.query_dataclass)
+    source_order_specs = source_order_specs_from_dataclass(grouped_action.query_dataclass)
+
+    def grouped_collection_action_method(
+        self: ModelViewSet,
+        request: Request,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Response:
+        queryset = self.filter_queryset(self.get_queryset())
+        queryset = apply_filter_specs(queryset, request.query_params, source_filter_specs)
+        queryset = apply_order_specs(queryset, request.query_params, source_order_specs)
+        filtered_collection = filter_grouped_collection_for_acl(
+            queryset=queryset,
+            request=request,
+            acl=acl,
+            source_acl=grouped_action.source_acl,
+        )
+        dto = validated_query_dataclass(
+            serializer_class=serializer_class,
+            request=request,
+            dataclass_type=grouped_action.query_dataclass,
+        )
+        response_dto = grouped_action.handler(filtered_collection, dto)
+        return Response(dataclass_instance_to_response_data(response_dto))
+
+    grouped_collection_action_method.__name__ = grouped_action.name
+    grouped_collection_action_method.__qualname__ = grouped_action.name
+    grouped_collection_action_method.__doc__ = (
+        f"Generated grouped collection action `{grouped_action.name}`."
+    )
+    return action(
+        detail=False,
+        methods=cast(Any, list(grouped_action.methods)),
+        url_path=grouped_action.url_path,
+        url_name=grouped_action.url_name,
+    )(grouped_collection_action_method)
 
 
 def http_method_names_for_mode(read_only: bool) -> list[str]:
@@ -721,6 +834,18 @@ def validated_input_dataclass(
         dataclass_type,
         fill_missing_optional=fill_missing_optional,
     )
+
+
+def validated_query_dataclass(
+    *,
+    serializer_class: type[serializers.Serializer],
+    request: Request,
+    dataclass_type: type[Any],
+) -> Any:
+    """Validate request.query_params and return the configured grouped query dataclass."""
+    serializer = serializer_class(data=request.query_params)
+    serializer.is_valid(raise_exception=True)
+    return serializer_to_dataclass(serializer, dataclass_type)
 
 
 def apply_optional_viewset_attributes(

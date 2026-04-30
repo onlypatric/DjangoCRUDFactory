@@ -11,7 +11,7 @@ from rest_framework.routers import SimpleRouter
 from rest_framework.viewsets import ModelViewSet
 
 from .acl import ACLConfig
-from .actions import CustomActionSpec
+from .actions import CustomActionSpec, GroupedCollectionActionSpec
 from ._auto_response import build_auto_response_mapper, build_declared_response_mapper
 from .filters import FilterSpec, filter_specs_from_response_mapper
 from .ordering import OrderSpec, order_specs_from_response_mapper
@@ -71,6 +71,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None = None,
         writable_fields: Sequence[str] | None = None,
         custom_actions: Sequence[CustomActionSpec[M]] | None = None,
+        grouped_actions: Sequence[GroupedCollectionActionSpec[M]] | None = None,
         acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None = None,
         read_only: bool = False,
         app_name: str | None = None,
@@ -121,6 +122,9 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         self.custom_actions: tuple[CustomActionSpec[M], ...] = normalize_custom_actions(
             custom_actions
         )
+        self.grouped_actions: tuple[GroupedCollectionActionSpec[M], ...] = (
+            normalize_grouped_actions(grouped_actions)
+        )
         self.acl = acl
         self.is_read_only = read_only
         self.app_name: str = resolve_app_name(model, app_name)
@@ -160,6 +164,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             update_handler=self.update_handler,
             partial_update_handler=self.partial_update_handler,
             custom_actions=self.custom_actions,
+            grouped_actions=self.grouped_actions,
             acl=self.acl,
             app_name=self.app_name,
             route=self.route,
@@ -179,6 +184,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             update_handler=self.update_handler,
             partial_update_handler=self.partial_update_handler,
             custom_actions=self.custom_actions,
+            grouped_actions=self.grouped_actions,
             acl=self.acl,
             read_only=self.is_read_only,
             queryset=self.queryset,
@@ -209,6 +215,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         authentication_classes: Sequence[type[BaseAuthentication]] | None = None,
         pagination_class: type[BasePagination] | None = None,
         custom_actions: Sequence[CustomActionSpec[M]] | None = None,
+        grouped_actions: Sequence[GroupedCollectionActionSpec[M]] | None = None,
         acl: ACLConfig[M, object, object, object] | None = None,
     ) -> CRUDFactory[M, object, object, object, ResponseDTO]:
         """Return a factory that exposes only list and retrieve endpoints."""
@@ -227,6 +234,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             authentication_classes=authentication_classes,
             pagination_class=pagination_class,
             custom_actions=custom_actions,
+            grouped_actions=grouped_actions,
             acl=acl,
         )
 
@@ -365,6 +373,15 @@ def normalize_custom_actions(
     if custom_actions is None:
         return ()
     return tuple(custom_actions)
+
+
+def normalize_grouped_actions(
+    grouped_actions: Sequence[GroupedCollectionActionSpec[M]] | None,
+) -> tuple[GroupedCollectionActionSpec[M], ...]:
+    """Freeze optional grouped action specs for generated ViewSet stability."""
+    if grouped_actions is None:
+        return ()
+    return tuple(grouped_actions)
 
 
 def normalize_writable_fields(

@@ -146,3 +146,56 @@ class Connector(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+
+class MonitoringStation(models.Model):
+    name = models.CharField(max_length=120, unique=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    if TYPE_CHECKING:
+        hosts: models.Manager[MonitoringHost]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class MonitoringHost(models.Model):
+    station = models.ForeignKey(
+        MonitoringStation,
+        on_delete=models.CASCADE,
+        related_name="hosts",
+    )
+    name = models.CharField(max_length=120)
+
+    class Meta:
+        ordering = ["id"]
+
+    if TYPE_CHECKING:
+        station_id: int
+        items: models.Manager[MonitoringItem]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class MonitoringItem(models.Model):
+    itemid = models.AutoField(primary_key=True)
+    host = models.ForeignKey(
+        MonitoringHost,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    name = models.CharField(max_length=120)
+    units = models.CharField(max_length=40, blank=True, null=True)
+    exclude_from_station_summary = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["itemid"]
+
+    if TYPE_CHECKING:
+        host_id: int
+
+    def __str__(self) -> str:
+        return self.name
