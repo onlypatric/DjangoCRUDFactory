@@ -344,11 +344,35 @@ class EVInfrastructureCRUDIntegrationTests(TestCase):
         )
         patch_response = self.client.patch(detail_url, {"city": "Turin"}, format="json")
         delete_response = self.client.delete(detail_url, format="json")
+        location = Location.objects.get(pk=create_response.data["id"])
+        deleted_detail_response = self.client.get(detail_url, format="json")
+        archived_list_response = self.client.get(
+            "/api/locations/",
+            {"include_archived": "true"},
+            format="json",
+        )
+        restore_response = self.client.post(
+            f"{detail_url}restore/",
+            {},
+            format="json",
+        )
+        restored_detail_response = self.client.get(detail_url, format="json")
 
         self.assertEqual(create_response.status_code, 201)
         self.assertEqual(patch_response.status_code, 200)
         self.assertEqual(patch_response.data["city"], "Turin")
         self.assertEqual(delete_response.status_code, 204)
+        self.assertFalse(location.active)
+        self.assertEqual(deleted_detail_response.status_code, 404)
+        self.assertEqual(
+            [item["id"] for item in archived_list_response.data],
+            [location.pk],
+        )
+        self.assertEqual(restore_response.status_code, 200)
+        self.assertEqual(restore_response.data["id"], location.pk)
+        location.refresh_from_db()
+        self.assertTrue(location.active)
+        self.assertEqual(restored_detail_response.status_code, 200)
 
     def test_location_metadata_field_endpoint_reads_and_merges_json(self) -> None:
         location = self.create_location(name="Metadata Hub")
@@ -1237,18 +1261,31 @@ class FactoryDocsServerTests(TestCase):
     def test_factory_detail_doc_is_generated_from_server(self) -> None:
         client = APIClient()
 
-        response = client.get("/docs/factories/connector-crud/")
+        response = client.get("/docs/factories/location-crud/")
 
         body = response.content.decode("utf-8")
         self.assertEqual(response.status_code, 200)
         self.assertIn("text/markdown", response["Content-Type"])
-        self.assertIn("# Connector CRUD Factory", body)
+        self.assertIn("# Location CRUD Factory", body)
         self.assertIn("## Endpoints", body)
+        self.assertIn("POST /api/locations/{pk}/restore/", body)
+        self.assertIn("## Lifecycle", body)
+        self.assertIn("Include archived query param: `include_archived`", body)
+        self.assertIn("## Field Subresource Endpoints", body)
+        self.assertIn("`GET, PATCH /api/locations/{pk}/metadata/`", body)
+        self.assertIn("### `create`", body)
+        self.assertIn("LocationCreateDTO", body)
+
+    def test_connector_factory_doc_still_mentions_bulk_and_actions(self) -> None:
+        client = APIClient()
+
+        response = client.get("/docs/factories/connector-crud/")
+
+        body = response.content.decode("utf-8")
+        self.assertEqual(response.status_code, 200)
         self.assertIn("## Request DTOs", body)
         self.assertIn("## Response DTO", body)
-        self.assertIn("## Field Subresource Endpoints", body)
         self.assertIn("## Bulk Operations", body)
-        self.assertIn("`GET, PATCH /api/connectors/{pk}/metadata/`", body)
         self.assertIn("ConnectorActionInputDTO", body)
         self.assertIn("### `bulk_patch`", body)
 

@@ -10,8 +10,8 @@ non-auth flows.
 ## Progress Summary
 
 - Total tracked feature requests: `15`
-- Implemented so far: `12`
-- Still planned: `3`
+- Implemented so far: `13`
+- Still planned: `2`
 
 Implemented so far:
 
@@ -27,6 +27,7 @@ Implemented so far:
 10. enum histogram and grouped stats helpers
 11. built-in ACL presets
 12. advanced query DTOs for normal list endpoints
+13. soft delete and restore lifecycles
 
 ## Status Overview
 
@@ -44,19 +45,16 @@ Implemented so far:
 | Declarative filtered related collections / prefetch specs | `2026-04-30-filtered-related-collections.md` | `implemented` | `related_list(...)` now lets nested response DTO fields declare their own filtered queryset and recursive prefetch plan. |
 | Enum histogram / grouped stats helpers | `2026-04-30-enum-histogram-stats.md` | `implemented` | `enum_summary(...)` now generates count-stat response blocks from enum values while staying inside the normal stats pipeline. |
 | Built-in scoped ACL presets | `2026-04-30-built-in-acl-presets.md` | `implemented` | `scoped_read_acl(...)`, `scoped_read_write_acl(...)`, `global_read_acl(...)`, and `global_read_write_acl(...)` now cover the common permission shapes without hand-built `ACLConfig(...)` blocks. |
+| Soft delete / restore lifecycles | `2026-04-30-soft-delete-and-restore.md` | `implemented` | `lifecycle=...` now lets `DELETE` archive rows, hide archived records by default, optionally expose `include_archived`, and generate a restore action. |
 | Metadata composition helpers | `2026-04-30-metadata-composition-helpers.md` | `planned` | Improves DTO readability and reduces syntax noise. |
-| Soft delete / restore lifecycles | `2026-04-30-soft-delete-and-restore.md` | `planned` | Common product lifecycle requirement. |
 | Queryset plans from response contracts | `2026-04-30-queryset-plans-from-response-contracts.md` | `planned` | Ergonomics and N+1 safety improvement. |
 
 ## Recommended Order
 
-1. `2026-04-30-soft-delete-and-restore.md`
-    Reason: important product requirement, but less foundational than nested
-    writes and computed read support.
-2. `2026-04-30-queryset-plans-from-response-contracts.md`
+1. `2026-04-30-queryset-plans-from-response-contracts.md`
     Reason: improves ergonomics and performance, but is safer after more of the
     response-side abstractions are settled.
-3. `2026-04-30-metadata-composition-helpers.md`
+2. `2026-04-30-metadata-composition-helpers.md`
     Reason: useful DX cleanup, but not a capability blocker.
 
 ## Relationship Notes

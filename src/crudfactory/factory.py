@@ -24,6 +24,7 @@ from .field_subresources import (
     FieldSubresourceSpec,
     normalize_field_subresources,
 )
+from .lifecycle import LifecycleConfig
 from .list_queries import (
     ListQueryFilterSpec,
     ListQueryOrderingSpec,
@@ -108,6 +109,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         custom_actions: Sequence[CustomActionSpec[M]] | None = None,
         grouped_actions: Sequence[GroupedCollectionActionSpec[M]] | None = None,
         bulk_actions: Sequence[BulkActionSpec[Any]] | None = None,
+        lifecycle: LifecycleConfig | None = None,
         acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None = None,
         read_only: bool = False,
         app_name: str | None = None,
@@ -179,6 +181,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         self.bulk_actions: tuple[BulkActionSpec[Any], ...] = normalize_bulk_actions(
             bulk_actions
         )
+        self.lifecycle = lifecycle
         self.acl = acl
         self.is_read_only = read_only
         self.app_name: str = resolve_app_name(model, app_name)
@@ -243,6 +246,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             custom_actions=self.custom_actions,
             grouped_actions=self.grouped_actions,
             bulk_actions=self.bulk_actions,
+            lifecycle=self.lifecycle,
             acl=self.acl,
             app_name=self.app_name,
             route=self.route,
@@ -266,6 +270,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             grouped_actions=self.grouped_actions,
             bulk_actions=self.bulk_actions,
             field_subresources=self.field_subresources,
+            lifecycle=self.lifecycle,
             acl=self.acl,
             read_only=self.is_read_only,
             queryset=self.queryset,
@@ -306,6 +311,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         grouped_actions: Sequence[GroupedCollectionActionSpec[M]] | None = None,
         bulk_actions: Sequence[BulkActionSpec[Any]] | None = None,
         field_subresources: Sequence[FieldSubresourceSpec] | None = None,
+        lifecycle: LifecycleConfig | None = None,
         acl: ACLConfig[M, object, object, object] | None = None,
         parent_scope: ParentScopeSpec | None = None,
         list_query: type[object] | None = None,
@@ -329,6 +335,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             grouped_actions=grouped_actions,
             bulk_actions=bulk_actions,
             field_subresources=field_subresources,
+            lifecycle=lifecycle,
             acl=acl,
             parent_scope=parent_scope,
             list_query=list_query,

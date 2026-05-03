@@ -53,6 +53,13 @@ from .list_queries import (
     ListQuerySearchSpec,
     apply_list_query_dataclass,
 )
+from .lifecycle import (
+    LifecycleConfig,
+    apply_delete_lifecycle,
+    apply_restore_lifecycle,
+    lifecycle_filter_queryset,
+    lifecycle_include_archived_requested,
+)
 from ._simple_writes import MODEL_FIELD_METADATA_KEY
 from .inputs import override_dataclass, project_dataclass, serializer_to_dataclass
 from .ordering import OrderSpec, apply_order_specs
@@ -103,6 +110,7 @@ def build_crud_viewset_class(
     grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
     bulk_actions: tuple[BulkActionSpec[Any], ...],
     field_subresources: tuple[FieldSubresourceSpec, ...],
+    lifecycle: LifecycleConfig | None,
     acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None,
     read_only: bool,
     queryset: models.QuerySet[M] | None,
@@ -166,6 +174,7 @@ def build_crud_viewset_class(
         custom_actions=custom_actions,
         grouped_actions=grouped_actions,
         bulk_actions=bulk_actions,
+        lifecycle=lifecycle,
         acl=acl,
         read_only=read_only,
         serializers_by_action=serializers_by_action,
@@ -201,6 +210,7 @@ def build_crud_viewset_class(
         filter_specs=filter_specs,
         order_specs=order_specs,
         list_query=list_query,
+        lifecycle=lifecycle,
         custom_actions=custom_actions,
         custom_action_serializers=custom_action_serializers,
         custom_action_response_serializers=custom_action_response_serializers,
@@ -392,6 +402,7 @@ def create_viewset_class(
     grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
     bulk_actions: tuple[BulkActionSpec[Any], ...],
     field_subresources: tuple[FieldSubresourceSpec, ...],
+    lifecycle: LifecycleConfig | None,
     acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None,
     read_only: bool,
     serializers_by_action: dict[str, type[serializers.Serializer]],
@@ -457,14 +468,33 @@ def create_viewset_class(
         def get_queryset(self) -> models.QuerySet[M]:
             queryset = cast(models.QuerySet[M], super().get_queryset())
             if parent_scope is None:
-                return queryset
-            parent_instance = self.get_parent_instance()
-            if parent_instance is None:
-                return queryset
-            return cast(
-                models.QuerySet[M],
-                queryset.filter(**{parent_scope.child_fk_field: parent_instance}),
+                scoped_queryset = queryset
+            else:
+                parent_instance = self.get_parent_instance()
+                if parent_instance is None:
+                    scoped_queryset = queryset
+                else:
+                    scoped_queryset = cast(
+                        models.QuerySet[M],
+                        queryset.filter(**{parent_scope.child_fk_field: parent_instance}),
+                    )
+            if lifecycle is None:
+                return scoped_queryset
+            action_name = getattr(self, "action", "")
+            include_archived = lifecycle_include_archived_requested(
+                lifecycle,
+                self.request.query_params.get(lifecycle.include_archived_param or "")
+                if hasattr(self, "request")
+                else None,
             )
+            if action_name == "list":
+                if include_archived:
+                    return scoped_queryset
+                return cast(models.QuerySet[M], lifecycle_filter_queryset(scoped_queryset, lifecycle))
+            if action_name in {"retrieve", "update", "partial_update", "destroy"}:
+                if lifecycle.hide_archived_detail:
+                    return cast(models.QuerySet[M], lifecycle_filter_queryset(scoped_queryset, lifecycle))
+            return scoped_queryset
 
         def get_serializer_class(self) -> type[serializers.Serializer]:
             return serializer_for_action(
@@ -656,7 +686,10 @@ def create_viewset_class(
                 instance=instance,
                 resolver=resource_ref_from_instance(acl),
             )
-            self.perform_destroy(instance)
+            if lifecycle is None:
+                self.perform_destroy(instance)
+            else:
+                apply_delete_lifecycle(cast(models.Model, instance), lifecycle)
             return Response(status=status.HTTP_204_NO_CONTENT)
 
     attach_custom_actions(
@@ -664,6 +697,19 @@ def create_viewset_class(
         custom_actions=custom_actions,
         custom_action_serializers=custom_action_serializers,
         acl=acl,
+    )
+    attach_lifecycle_actions(
+        viewset_class=GeneratedCRUDViewSet,
+        model=model,
+        queryset=viewset_queryset,
+        lifecycle=lifecycle,
+        lookup_field=lookup_field,
+        lookup_url_kwarg=lookup_url_kwarg,
+        response_mapper=response_mapper,
+        stat_specs=stat_specs,
+        annotation_specs=annotation_specs,
+        acl=acl,
+        parent_scope=parent_scope,
     )
     attach_grouped_collection_actions(
         viewset_class=GeneratedCRUDViewSet,
@@ -681,6 +727,7 @@ def create_viewset_class(
         partial_update_handler=partial_update_handler,
         bulk_actions=bulk_actions,
         bulk_action_serializers=bulk_action_serializers,
+        lifecycle=lifecycle,
         acl=acl,
     )
     attach_field_subresources(
@@ -728,6 +775,38 @@ def attach_grouped_collection_actions(
         setattr(viewset_class, grouped_action.name, action_method)
 
 
+def attach_lifecycle_actions(
+    *,
+    viewset_class: type[ModelViewSet],
+    model: type[M],
+    queryset: models.QuerySet[M],
+    lifecycle: LifecycleConfig | None,
+    lookup_field: str,
+    lookup_url_kwarg: str | None,
+    response_mapper: ResponseMapper[M, ResponseDTO],
+    stat_specs: tuple[AggregateStatSpec, ...],
+    annotation_specs: tuple[AnnotationSpec, ...],
+    acl: ACLConfig[M, Any, Any, Any] | None,
+    parent_scope: ParentScopeSpec | None,
+) -> None:
+    """Attach generated lifecycle actions such as restore."""
+    if lifecycle is None or not lifecycle.restore_action:
+        return
+    action_method = build_restore_action_method(
+        model=model,
+        queryset=queryset,
+        lifecycle=lifecycle,
+        lookup_field=lookup_field,
+        lookup_url_kwarg=lookup_url_kwarg,
+        response_mapper=response_mapper,
+        stat_specs=stat_specs,
+        annotation_specs=annotation_specs,
+        acl=acl,
+        parent_scope=parent_scope,
+    )
+    setattr(viewset_class, lifecycle.restore_action_name, action_method)
+
+
 def attach_bulk_actions(
     *,
     viewset_class: type[ModelViewSet],
@@ -739,6 +818,7 @@ def attach_bulk_actions(
     partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
     bulk_actions: tuple[BulkActionSpec[Any], ...],
     bulk_action_serializers: dict[str, type[serializers.Serializer]],
+    lifecycle: LifecycleConfig | None,
     acl: ACLConfig[M, Any, Any, Any] | None,
 ) -> None:
     """Attach generated bulk mutation endpoints to the ViewSet class."""
@@ -752,6 +832,7 @@ def attach_bulk_actions(
             partial_update_handler=partial_update_handler,
             bulk_action=bulk_action,
             serializer_class=bulk_action_serializers[bulk_action.name],
+            lifecycle=lifecycle,
             acl=acl,
         )
         setattr(viewset_class, bulk_action.name, action_method)
@@ -910,6 +991,70 @@ def build_grouped_collection_action_method(
     )(grouped_collection_action_method)
 
 
+def build_restore_action_method(
+    *,
+    model: type[M],
+    queryset: models.QuerySet[M],
+    lifecycle: LifecycleConfig,
+    lookup_field: str,
+    lookup_url_kwarg: str | None,
+    response_mapper: ResponseMapper[M, ResponseDTO],
+    stat_specs: tuple[AggregateStatSpec, ...],
+    annotation_specs: tuple[AnnotationSpec, ...],
+    acl: ACLConfig[M, Any, Any, Any] | None,
+    parent_scope: ParentScopeSpec | None,
+) -> Callable[..., Response]:
+    """Build a generated restore detail action for lifecycle-managed resources."""
+
+    def restore_action_method(
+        self: ModelViewSet,
+        request: Request,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Response:
+        scoped_queryset = queryset
+        if parent_scope is not None:
+            parent_lookup_value = self.kwargs[parent_scope.parent_lookup_url_kwarg]
+            parent_instance = get_object_or_404(
+                parent_scope.parent_model,
+                **{parent_scope.parent_lookup_field: parent_lookup_value},
+            )
+            scoped_queryset = cast(
+                models.QuerySet[M],
+                scoped_queryset.filter(**{parent_scope.child_fk_field: parent_instance}),
+            )
+        lookup_name = lookup_url_kwarg or lookup_field
+        instance = get_object_or_404(
+            scoped_queryset,
+            **{lookup_field: self.kwargs[lookup_name]},
+        )
+        enforce_instance_acl(
+            request=request,
+            acl=acl,
+            action_config=acl_action(acl, "update_action"),
+            instance=instance,
+            resolver=resource_ref_from_instance(acl),
+        )
+        apply_restore_lifecycle(cast(models.Model, instance), lifecycle)
+        return update_response(
+            viewset=cast(Any, self),
+            instance=instance,
+            response_mapper=response_mapper,
+            stat_specs=stat_specs,
+            annotation_specs=annotation_specs,
+        )
+
+    restore_action_method.__name__ = lifecycle.restore_action_name
+    restore_action_method.__qualname__ = lifecycle.restore_action_name
+    restore_action_method.__doc__ = "Generated lifecycle restore action."
+    return action(
+        detail=True,
+        methods=["post"],
+        url_path=lifecycle.restore_url_path,
+        url_name=lifecycle.restore_url_name,
+    )(restore_action_method)
+
+
 def build_bulk_action_method(
     *,
     create_input: type[CreateDTO] | None,
@@ -920,6 +1065,7 @@ def build_bulk_action_method(
     partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
     bulk_action: BulkActionSpec[Any],
     serializer_class: type[serializers.Serializer],
+    lifecycle: LifecycleConfig | None,
     acl: ACLConfig[M, Any, Any, Any] | None,
 ) -> Callable[..., Response]:
     """Build one generated bulk mutation action method."""
@@ -965,6 +1111,7 @@ def build_bulk_action_method(
                         partial_update_handler=partial_update_handler,
                         update_input=update_input,
                         partial_update_input=partial_update_input,
+                        lifecycle=lifecycle,
                     )
             except BulkOperationAbort as exc:
                 return bulk_result_response(
@@ -992,6 +1139,7 @@ def build_bulk_action_method(
             partial_update_handler=partial_update_handler,
             update_input=update_input,
             partial_update_input=partial_update_input,
+            lifecycle=lifecycle,
         )
         return bulk_result_response(
             result=result,
@@ -1077,6 +1225,7 @@ def apply_bulk_rows_atomically(
     partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
     update_input: type[UpdateDTO] | None,
     partial_update_input: type[PatchDTO] | None,
+    lifecycle: LifecycleConfig | None,
 ) -> BulkMutationResultDTO:
     """Apply every row inside one transaction, rolling back on the first failure."""
     result = empty_bulk_result()
@@ -1093,6 +1242,7 @@ def apply_bulk_rows_atomically(
             partial_update_handler=partial_update_handler,
             update_input=update_input,
             partial_update_input=partial_update_input,
+            lifecycle=lifecycle,
         )
         if isinstance(row_result, BulkRowErrorDTO):
             raise BulkOperationAbort(row_result)
@@ -1113,6 +1263,7 @@ def apply_bulk_rows_best_effort(
     partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
     update_input: type[UpdateDTO] | None,
     partial_update_input: type[PatchDTO] | None,
+    lifecycle: LifecycleConfig | None,
 ) -> BulkMutationResultDTO:
     """Apply valid rows while collecting row-level failures instead of aborting."""
     result = empty_bulk_result()
@@ -1131,6 +1282,7 @@ def apply_bulk_rows_best_effort(
             partial_update_handler=partial_update_handler,
             update_input=update_input,
             partial_update_input=partial_update_input,
+            lifecycle=lifecycle,
         )
         if isinstance(row_result, BulkRowErrorDTO):
             result.failed += 1
@@ -1153,6 +1305,7 @@ def apply_one_bulk_row(
     partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
     update_input: type[UpdateDTO] | None,
     partial_update_input: type[PatchDTO] | None,
+    lifecycle: LifecycleConfig | None,
 ) -> BulkMutationResultDTO | BulkRowErrorDTO:
     """Apply one validated bulk row and return either success counts or one row error."""
     try:
@@ -1248,7 +1401,10 @@ def apply_one_bulk_row(
                 resolver=resource_ref_from_instance(acl),
             )
             identifier = instance_identifier_string(instance)
-            viewset.perform_destroy(instance)
+            if lifecycle is None:
+                viewset.perform_destroy(instance)
+            else:
+                apply_delete_lifecycle(cast(models.Model, instance), lifecycle)
             return BulkMutationResultDTO(
                 deleted=1,
                 succeeded_identifiers=[identifier],

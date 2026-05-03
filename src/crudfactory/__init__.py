@@ -33,6 +33,7 @@ from .annotations import annotated_field, latest_related_value
 from .enum_stats import enum_summary
 from .factory import CRUDFactory
 from .field_subresources import FieldSubresourceSpec, field_subresource
+from .lifecycle import LifecycleConfig, archive_lifecycle, soft_delete_lifecycle
 from ._nested_writes import NestedWriteSpec, nested_relation
 from .filters import filterable
 from .list_queries import (
@@ -77,6 +78,7 @@ __all__ = [
     "BulkRowErrorDTO",
     "FieldSubresourceSpec",
     "GroupedCollectionSourceACL",
+    "LifecycleConfig",
     "NestedWriteSpec",
     "ParentScopeSpec",
     "avg_stat",
@@ -99,6 +101,7 @@ __all__ = [
     "global_read_acl",
     "global_read_write_acl",
     "grouped_collection_action",
+    "archive_lifecycle",
     "length",
     "max_stat",
     "min_stat",
@@ -118,6 +121,7 @@ __all__ = [
     "related_list",
     "scoped_read_acl",
     "scoped_read_write_acl",
+    "soft_delete_lifecycle",
     "source_filterable",
     "source_orderable",
     "sum_stat",

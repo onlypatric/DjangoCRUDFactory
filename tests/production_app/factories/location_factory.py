@@ -11,6 +11,7 @@ from ..models import Chargepoint
 
 from crudfactory import (
     CRUDFactory,
+    archive_lifecycle,
     count_stat,
     enum_summary,
     field_subresource,
@@ -313,6 +314,7 @@ location_factory = CRUDFactory(
         )
     ],
     queryset=LOCATION_QUERYSET,
+    lifecycle=archive_lifecycle(active_field="active", restore_action=True),
     app_name="inventory",
     route="locations",
     basename="location",

@@ -79,6 +79,7 @@ from crudfactory import (
     related_list,
     scoped_read_acl,
     scoped_read_write_acl,
+    soft_delete_lifecycle,
     source_filterable,
     source_orderable,
     sum_stat,
@@ -93,6 +94,7 @@ class Widget(models.Model):
     count = models.IntegerField(default=0)
     secret = models.CharField(max_length=50, default="")
     metadata = models.JSONField(default=dict, blank=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         app_label = "tests"
@@ -1015,6 +1017,16 @@ class CRUDFactoryTests(unittest.TestCase):
         }
         config.update(overrides)
         return CRUDFactory(**config)
+
+    def build_soft_delete_factory(self, **overrides: object) -> CRUDFactory:
+        config: dict[str, object] = {
+            "lifecycle": soft_delete_lifecycle(
+                deleted_field="deleted_at",
+                restore_action=True,
+            )
+        }
+        config.update(overrides)
+        return self.build_factory(**config)
 
     def build_simple_factory(self, **overrides: object) -> CRUDFactory:
         config = {
@@ -2603,6 +2615,105 @@ class CRUDFactoryTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 204)
         self.assertFalse(Widget.objects.filter(pk=widget.pk).exists())
+
+    def test_soft_delete_lifecycle_marks_row_as_archived_instead_of_deleting(self) -> None:
+        widget = Widget.objects.create(name="gone", count=1)
+        view = self.build_soft_delete_factory().get_viewset_class().as_view({"delete": "destroy"})
+
+        response = view(self.request_factory.delete(f"/widgets/{widget.pk}/"), pk=widget.pk)
+
+        widget.refresh_from_db()
+        self.assertEqual(response.status_code, 204)
+        self.assertIsNotNone(widget.deleted_at)
+
+    def test_soft_delete_lifecycle_hides_archived_rows_from_default_list(self) -> None:
+        visible = Widget.objects.create(name="alpha", count=1)
+        archived = Widget.objects.create(name="omega", count=9, deleted_at=dt.datetime.now(dt.timezone.utc))
+        view = self.build_soft_delete_factory().get_viewset_class().as_view({"get": "list"})
+
+        response = view(self.request_factory.get("/widgets/"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["id"] for item in response.data], [visible.pk])
+        self.assertNotIn(archived.pk, [item["id"] for item in response.data])
+
+    def test_soft_delete_lifecycle_can_include_archived_rows_on_list(self) -> None:
+        visible = Widget.objects.create(name="alpha", count=1)
+        archived = Widget.objects.create(name="omega", count=9, deleted_at=dt.datetime.now(dt.timezone.utc))
+        view = self.build_soft_delete_factory().get_viewset_class().as_view({"get": "list"})
+
+        response = view(self.request_factory.get("/widgets/?include_archived=true"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [item["id"] for item in response.data],
+            [visible.pk, archived.pk],
+        )
+
+    def test_soft_delete_lifecycle_restore_action_reactivates_archived_row(self) -> None:
+        archived = Widget.objects.create(
+            name="omega",
+            count=9,
+            deleted_at=dt.datetime.now(dt.timezone.utc),
+        )
+        view = self.build_soft_delete_factory().get_viewset_class().as_view({"post": "restore"})
+
+        response = view(
+            self.request_factory.post(f"/widgets/{archived.pk}/restore/", {}, format="json"),
+            pk=archived.pk,
+        )
+
+        archived.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(archived.deleted_at)
+        self.assertEqual(response.data["id"], archived.pk)
+
+    def test_soft_delete_lifecycle_hides_archived_detail_and_update_routes(self) -> None:
+        archived = Widget.objects.create(
+            name="omega",
+            count=9,
+            deleted_at=dt.datetime.now(dt.timezone.utc),
+        )
+        retrieve_view = self.build_soft_delete_factory().get_viewset_class().as_view(
+            {"get": "retrieve"}
+        )
+        patch_view = self.build_soft_delete_factory().get_viewset_class().as_view(
+            {"patch": "partial_update"}
+        )
+
+        retrieve_response = retrieve_view(
+            self.request_factory.get(f"/widgets/{archived.pk}/"),
+            pk=archived.pk,
+        )
+        patch_response = patch_view(
+            self.request_factory.patch(
+                f"/widgets/{archived.pk}/",
+                {"count": 8},
+                format="json",
+            ),
+            pk=archived.pk,
+        )
+
+        self.assertEqual(retrieve_response.status_code, 404)
+        self.assertEqual(patch_response.status_code, 404)
+
+    def test_soft_delete_markdown_docs_describe_lifecycle_contract(self) -> None:
+        markdown = self.build_soft_delete_factory(
+            route="widgets",
+            basename="widget",
+        ).render_markdown_docs(
+            title="Widget Factory",
+            base_path="/api",
+        )
+
+        self.assertIn("## Lifecycle", markdown)
+        self.assertIn("Mode: `timestamp-delete`", markdown)
+        self.assertIn("Restore action: `POST /.../restore/`", markdown)
+        self.assertIn("Include archived query param: `include_archived`", markdown)
+
+    def test_soft_delete_lifecycle_validation_rejects_non_datetime_field(self) -> None:
+        with self.assertRaisesRegex(TypeError, "soft_delete_lifecycle requires a DateTimeField"):
+            self.build_factory(lifecycle=soft_delete_lifecycle(deleted_field="count"))
 
     def test_invalid_payload_returns_drf_validation_errors(self) -> None:
         view = self.build_factory().get_viewset_class().as_view({"post": "create"})

@@ -27,6 +27,7 @@ from .list_queries import (
     ListQueryOrderingDeclaration,
     ListQuerySearchDeclaration,
 )
+from .lifecycle import LifecycleConfig
 from .ordering import ORDERING_QUERY_PARAM, ORDER_METADATA_KEY
 from .related_collections import RELATED_LIST_METADATA_KEY, RelatedListDeclaration
 from .source_queries import SOURCE_FILTER_METADATA_KEY, SOURCE_ORDER_METADATA_KEY
@@ -65,6 +66,10 @@ def render_factory_markdown(
     lines.append("## Query Features")
     lines.append("")
     lines.extend(query_feature_lines(factory))
+    lines.append("")
+    lines.append("## Lifecycle")
+    lines.append("")
+    lines.extend(lifecycle_lines(factory))
     lines.append("")
     lines.append("## Request DTOs")
     lines.append("")
@@ -152,6 +157,10 @@ def endpoint_lines(
         action_path = f"{route_path}{bulk_action.url_path or bulk_action.name}/"
         methods = ", ".join(method.upper() for method in bulk_action.methods)
         lines.append(f"- `{methods} {action_path}`: bulk {bulk_action.kind}")
+    lifecycle = getattr(factory, "lifecycle", None)
+    if isinstance(lifecycle, LifecycleConfig) and lifecycle.restore_action:
+        restore_path = f"{detail_path}{lifecycle.restore_url_path}/"
+        lines.append(f"- `POST {restore_path}`: restore")
     for field_subresource in getattr(factory, "field_subresources", ()):
         action_path = (
             f"{detail_path}{field_subresource.url_path or field_subresource.field_name}/"
@@ -201,9 +210,40 @@ def query_feature_lines(factory: CRUDFactory[Any, Any, Any, Any, Any]) -> list[s
         for order_spec in factory.order_specs:
             lines.append(f"- `{order_spec.query_name}` -> `{order_spec.lookup}`")
         lines.append("")
+    lifecycle = getattr(factory, "lifecycle", None)
+    if isinstance(lifecycle, LifecycleConfig) and lifecycle.include_archived_param is not None:
+        lines.append("### Lifecycle Query Parameters")
+        lines.append("")
+        lines.append(
+            f"- `{lifecycle.include_archived_param}` -> include archived rows in list responses"
+        )
+        lines.append("")
     if not lines:
         return ["No filter or ordering metadata is declared."]
     return trim_trailing_blank(lines)
+
+
+def lifecycle_lines(factory: CRUDFactory[Any, Any, Any, Any, Any]) -> list[str]:
+    lifecycle = getattr(factory, "lifecycle", None)
+    if not isinstance(lifecycle, LifecycleConfig):
+        return ["No lifecycle override is declared. `DELETE` performs a hard delete."]
+    lines = [f"- Mode: `{lifecycle.mode}`", f"- Lifecycle field: `{lifecycle.field_name}`"]
+    lines.append(
+        "- Delete behavior: archives the row instead of hard-deleting it."
+    )
+    lines.append(
+        "- Detail visibility: "
+        + ("archived rows are hidden by default." if lifecycle.hide_archived_detail else "archived rows remain retrievable.")
+    )
+    if lifecycle.restore_action:
+        lines.append(
+            f"- Restore action: `POST /.../{lifecycle.restore_url_path}/`"
+        )
+    if lifecycle.include_archived_param is not None:
+        lines.append(
+            f"- Include archived query param: `{lifecycle.include_archived_param}`"
+        )
+    return lines
 
 
 def request_section_lines(factory: CRUDFactory[Any, Any, Any, Any, Any]) -> list[str]:

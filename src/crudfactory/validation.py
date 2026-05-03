@@ -19,6 +19,7 @@ from .dataclass_serializers import (
     validate_supported_dataclass_fields,
 )
 from .field_subresources import FieldSubresourceSpec, validate_field_subresources
+from .lifecycle import LifecycleConfig
 from .list_queries import (
     list_query_filter_specs_from_dataclass,
     list_query_ordering_specs_from_dataclass,
@@ -61,6 +62,7 @@ def validate_factory_configuration(
     custom_actions: tuple[CustomActionSpec[M], ...],
     grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
     bulk_actions: tuple[BulkActionSpec[object], ...],
+    lifecycle: LifecycleConfig | None,
     acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None,
     app_name: str,
     route: str,
@@ -80,6 +82,7 @@ def validate_factory_configuration(
     validate_custom_actions(custom_actions)
     validate_grouped_actions(grouped_actions)
     validate_list_query(list_query)
+    validate_lifecycle(model=model, lifecycle=lifecycle)
     validate_bulk_actions(
         create_input=create_input,
         update_input=update_input,
@@ -185,6 +188,41 @@ def validate_list_query(list_query: type[object] | None) -> None:
     list_query_filter_specs_from_dataclass(list_query)
     list_query_search_specs_from_dataclass(list_query)
     list_query_ordering_specs_from_dataclass(list_query)
+
+
+def validate_lifecycle(
+    *,
+    model: type[models.Model],
+    lifecycle: LifecycleConfig | None,
+) -> None:
+    """Validate lifecycle config against the underlying Django model field."""
+    if lifecycle is None:
+        return
+    try:
+        model_field = model._meta.get_field(lifecycle.field_name)
+    except Exception as exc:
+        msg = f"Lifecycle field {lifecycle.field_name!r} does not exist on {model.__name__}."
+        raise TypeError(msg) from exc
+    if lifecycle.mode == "timestamp-delete":
+        if not isinstance(model_field, models.DateTimeField):
+            msg = (
+                "soft_delete_lifecycle requires a DateTimeField. "
+                f"{model.__name__}.{lifecycle.field_name} is {type(model_field).__name__}."
+            )
+            raise TypeError(msg)
+        if not model_field.null:
+            msg = (
+                "soft_delete_lifecycle requires a nullable DateTimeField so restore can "
+                f"set {model.__name__}.{lifecycle.field_name} back to None."
+            )
+            raise TypeError(msg)
+        return
+    if not isinstance(model_field, models.BooleanField):
+        msg = (
+            "archive_lifecycle requires a BooleanField. "
+            f"{model.__name__}.{lifecycle.field_name} is {type(model_field).__name__}."
+        )
+        raise TypeError(msg)
 
 
 def validate_response_mapper_dataclass(

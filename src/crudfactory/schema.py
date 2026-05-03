@@ -21,6 +21,7 @@ from .dataclass_serializers import (
 )
 from .field_subresources import FieldSubresourceSpec, direct_model_field
 from .filters import FilterSpec
+from .lifecycle import LifecycleConfig
 from .ordering import ORDERING_QUERY_PARAM, OrderSpec
 from .source_queries import source_filter_specs_from_dataclass, source_order_specs_from_dataclass
 
@@ -187,6 +188,7 @@ def apply_schema_metadata(
     filter_specs: tuple[FilterSpec, ...],
     order_specs: tuple[OrderSpec, ...],
     list_query: type[object] | None = None,
+    lifecycle: LifecycleConfig | None = None,
     custom_actions: tuple[CustomActionSpec[Any], ...] = (),
     custom_action_serializers: dict[str, type[serializers.Serializer]] | None = None,
     custom_action_response_serializers: dict[str, type[serializers.Serializer]] | None = None,
@@ -221,6 +223,7 @@ def apply_schema_metadata(
         filter_specs=filter_specs,
         order_specs=order_specs,
         list_query=list_query,
+        lifecycle=lifecycle,
         custom_actions=custom_actions,
         custom_action_serializers=custom_action_serializers or {},
         custom_action_response_serializers=custom_action_response_serializers or {},
@@ -263,6 +266,7 @@ def apply_drf_spectacular_metadata(
     filter_specs: tuple[FilterSpec, ...],
     order_specs: tuple[OrderSpec, ...],
     list_query: type[object] | None,
+    lifecycle: LifecycleConfig | None,
     custom_actions: tuple[CustomActionSpec[Any], ...],
     custom_action_serializers: dict[str, type[serializers.Serializer]],
     custom_action_response_serializers: dict[str, type[serializers.Serializer]],
@@ -289,6 +293,7 @@ def apply_drf_spectacular_metadata(
         filter_specs=filter_specs,
         order_specs=order_specs,
         list_query=list_query,
+        lifecycle=lifecycle,
         OpenApiParameter=OpenApiParameter,
     )
     viewset_class.list = extend_schema(
@@ -325,6 +330,13 @@ def apply_drf_spectacular_metadata(
             viewset_class=viewset_class,
             model=model,
             field_subresources=field_subresources,
+            extend_schema=extend_schema,
+        )
+        decorate_lifecycle_actions(
+            viewset_class=viewset_class,
+            lifecycle=lifecycle,
+            response_serializer=response_serializer,
+            OpenApiParameter=OpenApiParameter,
             extend_schema=extend_schema,
         )
         return
@@ -367,6 +379,13 @@ def apply_drf_spectacular_metadata(
         viewset_class=viewset_class,
         model=model,
         field_subresources=field_subresources,
+        extend_schema=extend_schema,
+    )
+    decorate_lifecycle_actions(
+        viewset_class=viewset_class,
+        lifecycle=lifecycle,
+        response_serializer=response_serializer,
+        OpenApiParameter=OpenApiParameter,
         extend_schema=extend_schema,
     )
 
@@ -492,6 +511,7 @@ def list_parameters_for_schema(
     filter_specs: tuple[FilterSpec, ...],
     order_specs: tuple[OrderSpec, ...],
     list_query: type[object] | None = None,
+    lifecycle: LifecycleConfig | None = None,
     OpenApiParameter: type[Any],
 ) -> list[Any]:
     """Return OpenAPI query parameters for generated list filters/orderings."""
@@ -519,6 +539,16 @@ def list_parameters_for_schema(
                 ),
             )
         )
+    if lifecycle is not None and lifecycle.include_archived_param is not None:
+        parameters.append(
+            OpenApiParameter(
+                name=lifecycle.include_archived_param,
+                type=bool,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Include archived rows in list responses.",
+            )
+        )
     if list_query is None:
         return parameters
     seen_names = {parameter.name for parameter in parameters}
@@ -532,6 +562,28 @@ def list_parameters_for_schema(
         seen_names.add(parameter.name)
         parameters.append(parameter)
     return parameters
+
+
+def decorate_lifecycle_actions(
+    *,
+    viewset_class: type[ModelViewSet],
+    lifecycle: LifecycleConfig | None,
+    response_serializer: type[serializers.Serializer],
+    OpenApiParameter: type[Any],
+    extend_schema: Any,
+) -> None:
+    """Decorate generated lifecycle actions and semantics for schema output."""
+    if lifecycle is None or not lifecycle.restore_action:
+        return
+    action_method = getattr(viewset_class, lifecycle.restore_action_name)
+    setattr(
+        viewset_class,
+        lifecycle.restore_action_name,
+        extend_schema(
+            request=None,
+            responses=response_serializer,
+        )(action_method),
+    )
 
 
 def grouped_action_parameters_for_schema(
