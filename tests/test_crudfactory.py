@@ -47,6 +47,7 @@ from crudfactory import (
     ACLConfig,
     CRUDFactory,
     GroupedCollectionSourceACL,
+    QueryPlan,
     avg_stat,
     annotated_field,
     bulk_create_action,
@@ -55,6 +56,8 @@ from crudfactory import (
     collection_action,
     choices,
     compose_meta,
+    auto_query_plan,
+    derive_query_plan,
     grouped_collection_action,
     count_stat,
     enum_summary,
@@ -441,6 +444,13 @@ class NestedWidgetResponseDTO:
         default_factory=list,
         metadata=model_field("children"),
     )
+
+
+@dataclass
+class NestedWidgetChildRelatedResponseDTO:
+    id: int = field(metadata=model_field("pk"))
+    widget_name: str = field(metadata=model_field("widget__name"))
+    status: str
 
 
 @dataclass
@@ -1210,6 +1220,17 @@ class CRUDFactoryTests(unittest.TestCase):
             **config,
         )
 
+    def build_child_query_plan_factory(self, **overrides: object) -> CRUDFactory:
+        config = {
+            "model": NestedWidgetChild,
+            "response_dataclass": NestedWidgetChildRelatedResponseDTO,
+            "queryset": NestedWidgetChild.objects.order_by("id"),
+            "read_only": True,
+            "query_plan": auto_query_plan(),
+        }
+        config.update(overrides)
+        return CRUDFactory(**config)
+
     def create_widget(self, dto: WidgetCreateDTO) -> Widget:
         self.created_payloads.append(dto)
         return Widget.objects.create(
@@ -1658,6 +1679,62 @@ class CRUDFactoryTests(unittest.TestCase):
             "Related list queryset: `NestedWidgetChild` with declarative prefetch",
             markdown,
         )
+
+    def test_derive_query_plan_infers_forward_select_related_paths(self) -> None:
+        factory = self.build_child_query_plan_factory()
+        query_plan = derive_query_plan(
+            model=NestedWidgetChild,
+            response_mapper=factory.response_mapper,
+            stat_specs=factory.stat_specs,
+            annotation_specs=factory.annotation_specs,
+        )
+
+        self.assertEqual(query_plan.select_related, ("widget",))
+
+    def test_auto_query_plan_is_applied_to_generated_queryset(self) -> None:
+        parent = NestedWidget.objects.create(name="parent")
+        child = NestedWidgetChild.objects.create(widget=parent, name="child", status="online")
+        factory = self.build_child_query_plan_factory()
+        viewset_class = factory.get_viewset_class()
+        response = viewset_class.as_view({"get": "list"})(self.request_factory.get("/children/"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data[0]["widget_name"], "parent")
+        self.assertEqual(factory.query_plan.select_related, ("widget",))
+        self.assertEqual([item["id"] for item in response.data], [child.pk])
+
+    def test_manual_queryset_is_preserved_when_auto_query_plan_is_enabled(self) -> None:
+        parent = NestedWidget.objects.create(name="parent")
+        hidden_parent = NestedWidget.objects.create(name="hidden-parent")
+        visible = NestedWidgetChild.objects.create(widget=parent, name="visible", status="online")
+        NestedWidgetChild.objects.create(widget=hidden_parent, name="hidden", status="offline")
+        factory = self.build_child_query_plan_factory(
+            queryset=NestedWidgetChild.objects.filter(name="visible").order_by("id"),
+        )
+        response = factory.get_viewset_class().as_view({"get": "list"})(
+            self.request_factory.get("/children/")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["id"] for item in response.data], [visible.pk])
+
+    def test_query_plan_can_opt_out_of_auto_inference(self) -> None:
+        factory = self.build_child_query_plan_factory(
+            query_plan=QueryPlan(replace_auto=True),
+        )
+
+        self.assertEqual(factory.query_plan.select_related, ())
+        self.assertEqual(factory.query_plan.prefetch_related, ())
+
+    def test_query_plan_markdown_docs_include_select_and_prefetch_hints(self) -> None:
+        markdown = self.build_filtered_related_factory().render_markdown_docs(
+            title="Filtered Widget Factory",
+            base_path="/api",
+        )
+
+        self.assertIn("## Query Plan", markdown)
+        self.assertIn("`prefetch_related(...)`", markdown)
+        self.assertIn("`children`", markdown)
 
     def test_factory_can_render_markdown_contract_docs(self) -> None:
         markdown = self.build_factory(route="widgets", basename="widget").render_markdown_docs(

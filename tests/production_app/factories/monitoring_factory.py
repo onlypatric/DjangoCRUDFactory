@@ -10,6 +10,7 @@ from crudfactory import (
     CRUDFactory,
     DjangoACLBackend,
     GroupedCollectionSourceACL,
+    auto_query_plan,
     filterable,
     grouped_collection_action,
     model_field,
@@ -24,7 +25,7 @@ from ..models import MonitoringHost, MonitoringItem, MonitoringStation
 
 MONITORING_ITEM_QUERYSET = MonitoringItem.objects.filter(
     exclude_from_station_summary=False
-).select_related("host__station").order_by("host__station__name", "host__name", "itemid")
+).order_by("host__station__name", "host__name", "itemid")
 
 
 @dataclass(frozen=True)
@@ -151,6 +152,7 @@ monitoring_item_factory = CRUDFactory.read_only(
     model=MonitoringItem,
     response_dataclass=MonitoringItemResponseDTO,
     queryset=MONITORING_ITEM_QUERYSET,
+    query_plan=auto_query_plan(),
     route="monitoring-items",
     basename="monitoring-item",
     custom_actions=(),

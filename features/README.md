@@ -10,8 +10,8 @@ non-auth flows.
 ## Progress Summary
 
 - Total tracked feature requests: `15`
-- Implemented so far: `14`
-- Still planned: `1`
+- Implemented so far: `15`
+- Still planned: `0`
 
 Implemented so far:
 
@@ -29,6 +29,7 @@ Implemented so far:
 12. advanced query DTOs for normal list endpoints
 13. soft delete and restore lifecycles
 14. metadata composition helpers
+15. queryset plans derived from response contracts
 
 ## Status Overview
 
@@ -48,13 +49,11 @@ Implemented so far:
 | Built-in scoped ACL presets | `2026-04-30-built-in-acl-presets.md` | `implemented` | `scoped_read_acl(...)`, `scoped_read_write_acl(...)`, `global_read_acl(...)`, and `global_read_write_acl(...)` now cover the common permission shapes without hand-built `ACLConfig(...)` blocks. |
 | Soft delete / restore lifecycles | `2026-04-30-soft-delete-and-restore.md` | `implemented` | `lifecycle=...` now lets `DELETE` archive rows, hide archived records by default, optionally expose `include_archived`, and generate a restore action. |
 | Metadata composition helpers | `2026-04-30-metadata-composition-helpers.md` | `implemented` | `compose_meta(...)` now merges metadata fragments predictably and fails fast on duplicate keys, making larger DTOs easier to read. |
-| Queryset plans from response contracts | `2026-04-30-queryset-plans-from-response-contracts.md` | `planned` | Ergonomics and N+1 safety improvement. |
+| Queryset plans from response contracts | `2026-04-30-queryset-plans-from-response-contracts.md` | `implemented` | `derive_query_plan(...)`, `auto_query_plan()`, and `QueryPlan` now expose inferred `select_related(...)` and `prefetch_related(...)` plans from response contracts, with manual override support. |
 
 ## Recommended Order
 
-1. `2026-04-30-queryset-plans-from-response-contracts.md`
-    Reason: improves ergonomics and performance, but is safer after more of the
-    response-side abstractions are settled.
+Every tracked feature request in this backlog is now implemented.
 
 ## Relationship Notes
 

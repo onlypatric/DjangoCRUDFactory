@@ -48,6 +48,7 @@ from .metadata import compose_meta
 from .ordering import orderable
 from .pagination import page_number_pagination
 from .parent_scopes import ParentScopeSpec, parent_scope
+from .query_plans import AutoQueryPlan, QueryPlan, auto_query_plan, derive_query_plan
 from .related_collections import related_list
 from ._simple_writes import model_field
 from .source_queries import source_filterable, source_orderable
@@ -81,7 +82,9 @@ __all__ = [
     "GroupedCollectionSourceACL",
     "LifecycleConfig",
     "NestedWriteSpec",
+    "AutoQueryPlan",
     "ParentScopeSpec",
+    "QueryPlan",
     "avg_stat",
     "annotated_field",
     "latest_related_value",
@@ -118,6 +121,8 @@ __all__ = [
     "query_ordering",
     "query_range",
     "query_search",
+    "auto_query_plan",
+    "derive_query_plan",
     "range_",
     "regex",
     "related_list",

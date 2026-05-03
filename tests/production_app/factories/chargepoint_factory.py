@@ -8,6 +8,7 @@ from django.db import models
 
 from crudfactory import (
     CRUDFactory,
+    auto_query_plan,
     field_subresource,
     filterable,
     length,
@@ -22,7 +23,7 @@ from crudfactory import (
 from ..models import Chargepoint
 
 
-CHARGEPOINT_QUERYSET = Chargepoint.objects.select_related("location").order_by("id")
+CHARGEPOINT_QUERYSET = Chargepoint.objects.order_by("id")
 
 
 @dataclass
@@ -240,6 +241,7 @@ chargepoint_factory = CRUDFactory(
         )
     ],
     queryset=CHARGEPOINT_QUERYSET,
+    query_plan=auto_query_plan(),
     app_name="inventory",
     route="chargepoints",
     basename="chargepoint",
@@ -252,6 +254,7 @@ chargepoint_summary_factory = CRUDFactory.read_only(
     model=Chargepoint,
     response_dataclass=V3ChargepointSummaryResponse,
     queryset=CHARGEPOINT_QUERYSET,
+    query_plan=auto_query_plan(),
     app_name="inventory",
     route="v3/ocpp/chargepoints",
     basename="v3-chargepoint-summary",
@@ -264,6 +267,7 @@ chargepoint_detail_factory = CRUDFactory(
     update_input=V3ChargepointDisplayWriteDTO,
     partial_update_input=V3ChargepointDisplayWriteDTO,
     queryset=CHARGEPOINT_QUERYSET,
+    query_plan=auto_query_plan(),
     app_name="inventory",
     route="v3/ocpp/chargepoints",
     basename="v3-chargepoint-detail",

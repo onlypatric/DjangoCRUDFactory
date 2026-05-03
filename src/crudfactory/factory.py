@@ -43,7 +43,13 @@ from ._nested_writes import (
     wrap_update_handler_with_nested_writes,
 )
 from .parent_scopes import ParentScopeSpec, normalize_parent_scope
-from .related_collections import related_prefetches_from_response_mapper
+from .query_plans import (
+    AutoQueryPlan,
+    QueryPlan,
+    apply_query_plan,
+    derive_query_plan,
+    merge_query_plans,
+)
 from .response import map_instance_to_response_data, map_instance_to_response_dataclass
 from .routers import (
     build_app_urlconf,
@@ -110,6 +116,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         grouped_actions: Sequence[GroupedCollectionActionSpec[M]] | None = None,
         bulk_actions: Sequence[BulkActionSpec[Any]] | None = None,
         lifecycle: LifecycleConfig | None = None,
+        query_plan: QueryPlan | AutoQueryPlan | None = None,
         acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None = None,
         read_only: bool = False,
         app_name: str | None = None,
@@ -134,10 +141,6 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             response_mapper=response_mapper,
             response_dataclass=response_dataclass,
             update_input=update_input,
-        )
-        self.related_prefetches = related_prefetches_from_response_mapper(
-            model=model,
-            response_mapper=self.response_mapper,
         )
         self.writable_fields: tuple[str, ...] | None = normalize_writable_fields(
             writable_fields
@@ -226,6 +229,14 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             self.model,
             self.response_mapper
         )
+        self.query_plan = resolve_query_plan(
+            model=self.model,
+            response_mapper=self.response_mapper,
+            stat_specs=self.stat_specs,
+            annotation_specs=self.annotation_specs,
+            query_plan=query_plan,
+        )
+        self.related_prefetches = self.query_plan.prefetch_related
 
         self.validate_configuration()
 
@@ -280,7 +291,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             authentication_classes=self.authentication_classes,
             pagination_class=self.pagination_class,
             parent_scope=self.parent_scope,
-            related_prefetches=self.related_prefetches,
+            query_plan=self.query_plan,
             filter_specs=self.filter_specs,
             order_specs=self.order_specs,
             list_query=self.list_query,
@@ -312,6 +323,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         bulk_actions: Sequence[BulkActionSpec[Any]] | None = None,
         field_subresources: Sequence[FieldSubresourceSpec] | None = None,
         lifecycle: LifecycleConfig | None = None,
+        query_plan: QueryPlan | AutoQueryPlan | None = None,
         acl: ACLConfig[M, object, object, object] | None = None,
         parent_scope: ParentScopeSpec | None = None,
         list_query: type[object] | None = None,
@@ -336,6 +348,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             bulk_actions=bulk_actions,
             field_subresources=field_subresources,
             lifecycle=lifecycle,
+            query_plan=query_plan,
             acl=acl,
             parent_scope=parent_scope,
             list_query=list_query,
@@ -418,14 +431,20 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         response_instance = instance_with_stat_annotations(
             instance=instance,
             queryset=annotate_queryset_with_annotation_specs(
-                queryset_for_factory_method(self.model, self.queryset),
+                apply_query_plan(
+                    queryset_for_factory_method(self.model, self.queryset),
+                    self.query_plan,
+                ),
                 self.annotation_specs,
             ),
             stat_specs=self.stat_specs,
         )
         response_instance = instance_with_annotation_specs(
             instance=response_instance,
-            queryset=queryset_for_factory_method(self.model, self.queryset),
+            queryset=apply_query_plan(
+                queryset_for_factory_method(self.model, self.queryset),
+                self.query_plan,
+            ),
             annotation_specs=self.annotation_specs,
         )
         return map_instance_to_response_data(
@@ -460,6 +479,28 @@ def resolve_route(model: type[models.Model], configured_route: str | None) -> st
 def resolve_basename(model: type[models.Model], configured_basename: str | None) -> str:
     """Return the configured router basename or a model-derived default."""
     return resolve_model_name_default(model, configured_basename)
+
+
+def resolve_query_plan(
+    *,
+    model: type[models.Model],
+    response_mapper: ResponseMapper[M, ResponseDTO],
+    stat_specs: tuple[AggregateStatSpec, ...],
+    annotation_specs: tuple[Any, ...],
+    query_plan: QueryPlan | AutoQueryPlan | None,
+) -> QueryPlan:
+    """Return the resolved query plan applied by one factory."""
+    derived_plan = derive_query_plan(
+        model=model,
+        response_mapper=response_mapper,
+        stat_specs=stat_specs,
+        annotation_specs=annotation_specs,
+    )
+    if query_plan is None or isinstance(query_plan, AutoQueryPlan):
+        return derived_plan
+    if query_plan.replace_auto:
+        return query_plan
+    return merge_query_plans(derived_plan, query_plan)
 
 
 def resolve_model_name_default(

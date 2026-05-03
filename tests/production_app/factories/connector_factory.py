@@ -11,6 +11,7 @@ from crudfactory import (
     ACLResourceRef,
     CRUDFactory,
     DjangoACLBackend,
+    auto_query_plan,
     bulk_create_action,
     bulk_delete_action,
     bulk_patch_action,
@@ -30,7 +31,7 @@ from crudfactory import (
 from ..models import Chargepoint, Connector
 
 
-CONNECTOR_QUERYSET = Connector.objects.select_related("chargepoint__location").order_by("id")
+CONNECTOR_QUERYSET = Connector.objects.order_by("id")
 
 
 @dataclass
@@ -353,6 +354,7 @@ connector_factory = CRUDFactory(
     update_input=ConnectorUpdateDTO,
     partial_update_input=ConnectorPatchDTO,
     queryset=CONNECTOR_QUERYSET,
+    query_plan=auto_query_plan(),
     field_subresources=[
         field_subresource(
             field_name="metadata",
@@ -420,6 +422,7 @@ chargepoint_connector_factory = CRUDFactory(
     update_input=ConnectorUpdateDTO,
     partial_update_input=ConnectorPatchDTO,
     queryset=CONNECTOR_QUERYSET,
+    query_plan=auto_query_plan(),
     acl=connector_acl,
     app_name="inventory",
     route="connectors",
@@ -442,6 +445,7 @@ connector_summary_factory = CRUDFactory.read_only(
     model=Connector,
     response_dataclass=V3ConnectorSummaryResponse,
     queryset=CONNECTOR_QUERYSET,
+    query_plan=auto_query_plan(),
     app_name="inventory",
     route="v3/ocpp/connectors",
     basename="v3-connector-summary",
@@ -454,6 +458,7 @@ connector_detail_factory = CRUDFactory(
     update_input=V3ConnectorDisplayWriteDTO,
     partial_update_input=V3ConnectorDisplayWriteDTO,
     queryset=CONNECTOR_QUERYSET,
+    query_plan=auto_query_plan(),
     app_name="inventory",
     route="v3/ocpp/connectors",
     basename="v3-connector-detail",

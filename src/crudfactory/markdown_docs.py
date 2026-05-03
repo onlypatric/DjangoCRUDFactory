@@ -67,6 +67,10 @@ def render_factory_markdown(
     lines.append("")
     lines.extend(query_feature_lines(factory))
     lines.append("")
+    lines.append("## Query Plan")
+    lines.append("")
+    lines.extend(query_plan_lines(factory))
+    lines.append("")
     lines.append("## Lifecycle")
     lines.append("")
     lines.extend(lifecycle_lines(factory))
@@ -243,6 +247,30 @@ def lifecycle_lines(factory: CRUDFactory[Any, Any, Any, Any, Any]) -> list[str]:
         lines.append(
             f"- Include archived query param: `{lifecycle.include_archived_param}`"
         )
+    return lines
+
+
+def query_plan_lines(factory: CRUDFactory[Any, Any, Any, Any, Any]) -> list[str]:
+    query_plan = getattr(factory, "query_plan", None)
+    if query_plan is None:
+        return ["No query plan is declared."]
+    lines: list[str] = []
+    select_related = getattr(query_plan, "select_related", ())
+    prefetch_related = getattr(query_plan, "prefetch_related", ())
+    if select_related:
+        lines.append("- `select_related(...)`")
+        for lookup in select_related:
+            lines.append(f"  - `{lookup}`")
+    if prefetch_related:
+        lines.append("- `prefetch_related(...)`")
+        for prefetch in prefetch_related:
+            lines.append(f"  - `{prefetch.prefetch_to}`")
+    if getattr(query_plan, "includes_stats", False):
+        lines.append("- Includes response stat annotations.")
+    if getattr(query_plan, "includes_annotations", False):
+        lines.append("- Includes declarative annotation fields.")
+    if not lines:
+        return ["No query-plan hints are active for this factory."]
     return lines
 
 

@@ -1268,6 +1268,7 @@ class FactoryDocsServerTests(TestCase):
         self.assertIn("text/markdown", response["Content-Type"])
         self.assertIn("# Location CRUD Factory", body)
         self.assertIn("## Endpoints", body)
+        self.assertIn("## Query Plan", body)
         self.assertIn("POST /api/locations/{pk}/restore/", body)
         self.assertIn("## Lifecycle", body)
         self.assertIn("Include archived query param: `include_archived`", body)
@@ -1285,7 +1286,9 @@ class FactoryDocsServerTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("## Request DTOs", body)
         self.assertIn("## Response DTO", body)
+        self.assertIn("## Query Plan", body)
         self.assertIn("## Bulk Operations", body)
+        self.assertIn("`chargepoint__location`", body)
         self.assertIn("ConnectorActionInputDTO", body)
         self.assertIn("### `bulk_patch`", body)
 
