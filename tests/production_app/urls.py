@@ -9,6 +9,7 @@ from .factories import (
     ConnectorSummaryViewSet,
     LocationDetailViewSet,
     LocationSummaryViewSet,
+    chargepoint_connector_factory,
     chargepoint_factory,
     connector_factory,
     inventory_item_factory,
@@ -21,6 +22,7 @@ urlpatterns = [
     *location_factory.get_urlpatterns(),
     *chargepoint_factory.get_urlpatterns(),
     *connector_factory.get_urlpatterns(),
+    *chargepoint_connector_factory.get_urlpatterns(),
     *inventory_item_factory.get_urlpatterns(),
     *monitoring_item_factory.get_urlpatterns(),
     # These explicit V3 routes are compatibility endpoints. They sit on the

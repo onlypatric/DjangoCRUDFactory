@@ -21,6 +21,7 @@ from crudfactory import (
     length,
     model_field,
     orderable,
+    parent_scope,
     range_,
     regex,
 )
@@ -397,6 +398,25 @@ connector_factory = CRUDFactory(
     app_name="inventory",
     route="connectors",
     basename="connector",
+)
+
+chargepoint_connector_factory = CRUDFactory(
+    model=Connector,
+    response_dataclass=ConnectorResponseDTO,
+    create_input=ConnectorCreateDTO,
+    update_input=ConnectorUpdateDTO,
+    partial_update_input=ConnectorPatchDTO,
+    queryset=CONNECTOR_QUERYSET,
+    acl=connector_acl,
+    app_name="inventory",
+    route="connectors",
+    basename="chargepoint-connector",
+    parent_scope=parent_scope(
+        parent_model=Chargepoint,
+        url_prefix="chargepoints/<int:chargepoint_pk>",
+        parent_lookup_url_kwarg="chargepoint_pk",
+        child_fk_field="chargepoint",
+    ),
 )
 
 # The V3 connector endpoints are intentionally split:

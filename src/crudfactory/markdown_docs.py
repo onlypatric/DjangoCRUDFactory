@@ -103,9 +103,10 @@ def default_factory_title(factory: CRUDFactory[Any, Any, Any, Any, Any]) -> str:
 
 def factory_summary_line(factory: CRUDFactory[Any, Any, Any, Any, Any]) -> str:
     mode = "read-only" if factory.is_read_only else "full CRUD"
+    route_path = factory_route_path(factory, base_path="")
     return (
         f"Generated `{mode}` contract for model `{factory.model.__name__}` "
-        f"on route `/{factory.route.strip('/')}/` with basename `{factory.basename}`."
+        f"on route `{route_path}` with basename `{factory.basename}`."
     )
 
 
@@ -114,7 +115,7 @@ def endpoint_lines(
     *,
     base_path: str,
 ) -> list[str]:
-    route_path = join_route(base_path, factory.route)
+    route_path = factory_route_path(factory, base_path=base_path)
     detail_path = f"{route_path}{{{factory.lookup_url_kwarg or factory.lookup_field}}}/"
     lines = [
         f"- `GET {route_path}`: list",
@@ -155,6 +156,18 @@ def join_route(base_path: str, route: str) -> str:
     normalized_base = "/" + base_path.strip("/") if base_path.strip("/") else ""
     normalized_route = route.strip("/")
     return f"{normalized_base}/{normalized_route}/"
+
+
+def factory_route_path(
+    factory: CRUDFactory[Any, Any, Any, Any, Any],
+    *,
+    base_path: str,
+) -> str:
+    """Return the collection route path, including an optional parent prefix."""
+    route = factory.route
+    if factory.parent_scope is not None:
+        route = f"{factory.parent_scope.url_prefix.strip('/')}/{route.strip('/')}"
+    return join_route(base_path, route)
 
 
 def query_feature_lines(factory: CRUDFactory[Any, Any, Any, Any, Any]) -> list[str]:
@@ -329,7 +342,7 @@ def field_subresource_lines(
     """Describe generated single-field detail endpoints."""
     if not getattr(factory, "field_subresources", ()):
         return ["No field subresource endpoints are declared."]
-    detail_path = join_route(base_path, factory.route)
+    detail_path = factory_route_path(factory, base_path=base_path)
     detail_path = f"{detail_path}{{{factory.lookup_url_kwarg or factory.lookup_field}}}/"
     lines: list[str] = []
     for field_subresource in factory.field_subresources:

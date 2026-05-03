@@ -10,8 +10,8 @@ non-auth flows.
 ## Progress Summary
 
 - Total tracked feature requests: `15`
-- Implemented so far: `7`
-- Still planned: `8`
+- Implemented so far: `8`
+- Still planned: `7`
 
 Implemented so far:
 
@@ -22,6 +22,7 @@ Implemented so far:
 5. generated field subresource endpoints
 6. typed GET collection actions with query DTOs
 7. latest related row helpers
+8. nested subresource endpoints
 
 ## Status Overview
 
@@ -30,7 +31,7 @@ Implemented so far:
 | Grouped collection responses with source-row ACL | `30-april-2026.md` | `implemented` | Implemented in the library as grouped read-only collection actions with per-row source ACL. |
 | Nested related writes | `2026-04-30-nested-related-writes.md` | `implemented` | V1 one-to-many nested collections with transactional create/update/patch reconciliation. |
 | Bulk typed operations | `2026-04-30-bulk-operations.md` | `implemented` | Generated bulk create, update, patch, and delete endpoints with structured results and transaction modes. |
-| Nested subresource endpoints | `2026-04-30-subresource-endpoints.md` | `planned` | Needed for parent-scoped APIs. |
+| Nested subresource endpoints | `2026-04-30-subresource-endpoints.md` | `implemented` | Parent-scoped factories can now generate nested CRUD routes with queryset scoping, URL-bound parent FK injection, and nested Markdown docs. |
 | Latest related row helpers | `2026-04-30-latest-related-values.md` | `implemented` | `latest_related_value(...)` now provides a first-class wrapper for the common latest-child-row scalar pattern. |
 | Declarative annotation / subquery fields | `2026-04-30-declarative-annotation-fields.md` | `implemented` | Response DTO fields can now declare `Subquery`, `Exists`, `Case`, and similar queryset annotations directly. |
 | Generated field subresource endpoints | `2026-04-30-field-subresource-endpoints.md` | `implemented` | Direct `GET`/`PATCH` field endpoints for concrete model fields, including JSON merge mode and field-specific ACL. |
@@ -45,27 +46,24 @@ Implemented so far:
 
 ## Recommended Order
 
-1. `2026-04-30-subresource-endpoints.md`
-   Reason: parent-child APIs are extremely common and still push developers
-   toward hand-written viewsets.
-2. `2026-04-30-filtered-related-collections.md`
+1. `2026-04-30-filtered-related-collections.md`
    Reason: nested read contracts are already strong; this makes them less
    boilerplate-heavy.
-3. `2026-04-30-enum-histogram-stats.md`
+2. `2026-04-30-enum-histogram-stats.md`
    Reason: strong productivity win in monitoring/status APIs.
-4. `2026-04-30-built-in-acl-presets.md`
+3. `2026-04-30-built-in-acl-presets.md`
     Reason: good readability improvement once the bigger behavioral features are
     in place.
-5. `2026-04-30-advanced-query-dtos.md`
+4. `2026-04-30-advanced-query-dtos.md`
     Reason: once CRUD and computed reads are covered, richer query forms become
     the next pressure point.
-6. `2026-04-30-soft-delete-and-restore.md`
+5. `2026-04-30-soft-delete-and-restore.md`
     Reason: important product requirement, but less foundational than nested
     writes and computed read support.
-7. `2026-04-30-queryset-plans-from-response-contracts.md`
+6. `2026-04-30-queryset-plans-from-response-contracts.md`
     Reason: improves ergonomics and performance, but is safer after more of the
     response-side abstractions are settled.
-8. `2026-04-30-metadata-composition-helpers.md`
+7. `2026-04-30-metadata-composition-helpers.md`
     Reason: useful DX cleanup, but not a capability blocker.
 
 ## Relationship Notes

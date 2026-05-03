@@ -63,6 +63,7 @@ from crudfactory import (
     model_field,
     nested_relation,
     orderable,
+    parent_scope,
     range_,
     regex,
     source_filterable,
@@ -113,6 +114,7 @@ class NestedWidgetChild(models.Model):
 
     if TYPE_CHECKING:
         id: int
+        widget_id: int
 
 
 class WidgetReading(models.Model):
@@ -305,6 +307,38 @@ class NestedWidgetResponseDTO:
         default_factory=list,
         metadata=model_field("children"),
     )
+
+
+@dataclass
+class NestedWidgetChildCreateDTO:
+    widget_id: int = field(metadata={**model_field("widget_id"), **range_(min=1, max=999999)})
+    name: str
+    status: str
+
+
+@dataclass
+class NestedWidgetChildUpdateDTO:
+    widget_id: int = field(metadata={**model_field("widget_id"), **range_(min=1, max=999999)})
+    name: str
+    status: str
+
+
+@dataclass
+class NestedWidgetChildPatchDTO:
+    widget_id: int | None = field(
+        default=None,
+        metadata={**model_field("widget_id"), **range_(min=1, max=999999)},
+    )
+    name: str | None = None
+    status: str | None = None
+
+
+@dataclass
+class NestedWidgetChildResponseDTO:
+    id: int = field(metadata=model_field("pk"))
+    widget_id: int
+    name: str
+    status: str
 
 
 @dataclass
@@ -917,6 +951,29 @@ class CRUDFactoryTests(unittest.TestCase):
         config.update(overrides)
         return CRUDFactory(**config)
 
+    def build_parent_scoped_child_factory(
+        self,
+        **overrides: object,
+    ) -> CRUDFactory:
+        config = {
+            "model": NestedWidgetChild,
+            "response_dataclass": NestedWidgetChildResponseDTO,
+            "create_input": NestedWidgetChildCreateDTO,
+            "update_input": NestedWidgetChildUpdateDTO,
+            "partial_update_input": NestedWidgetChildPatchDTO,
+            "queryset": NestedWidgetChild.objects.select_related("widget").order_by("id"),
+            "route": "children",
+            "basename": "nested-widget-child",
+            "parent_scope": parent_scope(
+                parent_model=NestedWidget,
+                url_prefix="nested-widgets/<int:widget_pk>",
+                parent_lookup_url_kwarg="widget_pk",
+                child_fk_field="widget",
+            ),
+        }
+        config.update(overrides)
+        return CRUDFactory(**config)
+
     def create_widget(self, dto: WidgetCreateDTO) -> Widget:
         self.created_payloads.append(dto)
         return Widget.objects.create(
@@ -1521,6 +1578,135 @@ class CRUDFactoryTests(unittest.TestCase):
                     )
                 ],
             )
+
+    def test_parent_scoped_list_returns_only_children_for_parent(self) -> None:
+        first_parent = NestedWidget.objects.create(name="first")
+        second_parent = NestedWidget.objects.create(name="second")
+        first_child = NestedWidgetChild.objects.create(
+            widget=first_parent,
+            name="first-child",
+            status="online",
+        )
+        NestedWidgetChild.objects.create(
+            widget=second_parent,
+            name="second-child",
+            status="offline",
+        )
+        view = self.build_parent_scoped_child_factory().get_viewset_class().as_view(
+            {"get": "list"}
+        )
+
+        response = view(
+            self.request_factory.get(f"/nested-widgets/{first_parent.pk}/children/"),
+            widget_pk=first_parent.pk,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data,
+            [
+                {
+                    "id": first_child.pk,
+                    "widget_id": first_parent.pk,
+                    "name": "first-child",
+                    "status": "online",
+                }
+            ],
+        )
+
+    def test_parent_scoped_create_binds_parent_from_url(self) -> None:
+        target_parent = NestedWidget.objects.create(name="target")
+        conflicting_parent = NestedWidget.objects.create(name="conflict")
+        view = self.build_parent_scoped_child_factory().get_viewset_class().as_view(
+            {"post": "create"}
+        )
+
+        response = view(
+            self.request_factory.post(
+                f"/nested-widgets/{target_parent.pk}/children/",
+                {
+                    "widget_id": conflicting_parent.pk,
+                    "name": "bound-child",
+                    "status": "online",
+                },
+                format="json",
+            ),
+            widget_pk=target_parent.pk,
+        )
+
+        created_child = NestedWidgetChild.objects.get(pk=response.data["id"])
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(created_child.widget_id, target_parent.pk)
+        self.assertEqual(response.data["widget_id"], target_parent.pk)
+
+    def test_parent_scoped_detail_rejects_child_from_different_parent(self) -> None:
+        parent = NestedWidget.objects.create(name="parent")
+        other_parent = NestedWidget.objects.create(name="other")
+        other_child = NestedWidgetChild.objects.create(
+            widget=other_parent,
+            name="other-child",
+            status="online",
+        )
+        view = self.build_parent_scoped_child_factory().get_viewset_class().as_view(
+            {"get": "retrieve"}
+        )
+
+        response = view(
+            self.request_factory.get(
+                f"/nested-widgets/{parent.pk}/children/{other_child.pk}/"
+            ),
+            widget_pk=parent.pk,
+            pk=other_child.pk,
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_parent_scoped_update_cannot_move_child_to_other_parent(self) -> None:
+        parent = NestedWidget.objects.create(name="parent")
+        other_parent = NestedWidget.objects.create(name="other")
+        child = NestedWidgetChild.objects.create(
+            widget=parent,
+            name="bound-child",
+            status="online",
+        )
+        view = self.build_parent_scoped_child_factory().get_viewset_class().as_view(
+            {"put": "update"}
+        )
+
+        response = view(
+            self.request_factory.put(
+                f"/nested-widgets/{parent.pk}/children/{child.pk}/",
+                {
+                    "widget_id": other_parent.pk,
+                    "name": "updated-child",
+                    "status": "faulted",
+                },
+                format="json",
+            ),
+            widget_pk=parent.pk,
+            pk=child.pk,
+        )
+
+        child.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(child.widget_id, parent.pk)
+        self.assertEqual(child.name, "updated-child")
+        self.assertEqual(response.data["widget_id"], parent.pk)
+
+    def test_parent_scoped_router_is_not_available(self) -> None:
+        with self.assertRaisesRegex(TypeError, "Parent-scoped factories do not expose a DRF router"):
+            self.build_parent_scoped_child_factory().get_router()
+
+    def test_parent_scoped_markdown_docs_include_nested_route(self) -> None:
+        markdown = self.build_parent_scoped_child_factory().render_markdown_docs(
+            title="Nested Child Factory",
+            base_path="/api",
+        )
+
+        self.assertIn(
+            "`GET /api/nested-widgets/<int:widget_pk>/children/`",
+            markdown,
+        )
 
     def test_grouped_action_registration_returns_collection_route(self) -> None:
         viewset_class = self.build_grouped_factory().get_viewset_class()

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .factories import (
+    chargepoint_connector_factory,
     chargepoint_detail_factory,
     chargepoint_factory,
     chargepoint_summary_factory,
@@ -40,6 +41,11 @@ FACTORY_DOCS: tuple[FactoryDocEntry, ...] = (
         slug="connector-crud",
         title="Connector CRUD Factory",
         factory=connector_factory,
+    ),
+    FactoryDocEntry(
+        slug="chargepoint-connector-crud",
+        title="Chargepoint Connector CRUD Factory",
+        factory=chargepoint_connector_factory,
     ),
     FactoryDocEntry(
         slug="inventory-item-readonly",

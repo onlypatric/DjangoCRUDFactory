@@ -19,6 +19,7 @@ from .dataclass_serializers import (
     validate_supported_dataclass_fields,
 )
 from .field_subresources import FieldSubresourceSpec, validate_field_subresources
+from .parent_scopes import ParentScopeSpec, validate_parent_scope
 from .schema import validate_supported_response_dataclass_fields
 from .source_queries import (
     source_filter_specs_from_dataclass,
@@ -59,6 +60,7 @@ def validate_factory_configuration(
     route: str,
     basename: str,
     read_only: bool,
+    parent_scope: ParentScopeSpec | None,
 ) -> None:
     """Validate every user-supplied piece of a CRUDFactory.
 
@@ -82,6 +84,14 @@ def validate_factory_configuration(
     validate_field_subresources(
         model=model,
         field_subresources=field_subresources,
+        read_only=read_only,
+    )
+    validate_parent_scope(
+        model=model,
+        parent_scope_spec=parent_scope,
+        create_input=cast(type[object] | None, create_input),
+        update_input=cast(type[object] | None, update_input),
+        partial_update_input=cast(type[object] | None, partial_update_input),
         read_only=read_only,
     )
     validate_non_empty_string("app_name", app_name)

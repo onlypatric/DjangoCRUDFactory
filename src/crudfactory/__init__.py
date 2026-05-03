@@ -27,6 +27,7 @@ from ._nested_writes import NestedWriteSpec, nested_relation
 from .filters import filterable
 from .ordering import orderable
 from .pagination import page_number_pagination
+from .parent_scopes import ParentScopeSpec, parent_scope
 from ._simple_writes import model_field
 from .source_queries import source_filterable, source_orderable
 from .stats import avg_stat, count_stat, max_stat, min_stat, sum_stat
@@ -58,6 +59,7 @@ __all__ = [
     "FieldSubresourceSpec",
     "GroupedCollectionSourceACL",
     "NestedWriteSpec",
+    "ParentScopeSpec",
     "avg_stat",
     "annotated_field",
     "latest_related_value",
@@ -82,6 +84,7 @@ __all__ = [
     "nested_relation",
     "orderable",
     "page_number_pagination",
+    "parent_scope",
     "range_",
     "regex",
     "source_filterable",

@@ -77,6 +77,27 @@ def project_dataclass(
     return construct_dataclass(dataclass_type, projected_data)
 
 
+def override_dataclass(
+    source_value: D,
+    overrides: dict[str, object],
+    *,
+    fill_missing_optional: bool = False,
+) -> D:
+    """Return a dataclass copy with one or more field values replaced.
+
+    CRUDFactory occasionally needs to trust URL-derived values over request-body
+    values, for example when a nested child resource must always stay bound to
+    the parent object identified in the route.  This helper rebuilds a
+    dataclass using the current field values plus explicit overrides.
+    """
+    dataclass_type = type(source_value)
+    projected_data = projected_dataclass_values(source_value, dataclass_type)
+    projected_data.update(overrides)
+    if fill_missing_optional:
+        fill_missing_optional_fields(projected_data, dataclass_type)
+    return construct_dataclass(dataclass_type, projected_data)
+
+
 def dataclass_constructor_values(
     dataclass_type: type[D],
     data: dict[str, object],

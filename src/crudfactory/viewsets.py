@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import fields as dataclass_fields
 from typing import Any, Callable, Sequence, cast
 
 from django.db import models
 from django.db import transaction
+from django.shortcuts import get_object_or_404
 from rest_framework import serializers, status
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.decorators import action
@@ -45,8 +47,10 @@ from .field_subresources import (
     read_field_payload,
     validated_field_payload,
 )
-from .inputs import project_dataclass, serializer_to_dataclass
+from ._simple_writes import MODEL_FIELD_METADATA_KEY
+from .inputs import override_dataclass, project_dataclass, serializer_to_dataclass
 from .ordering import OrderSpec, apply_order_specs
+from .parent_scopes import ParentScopeSpec, dataclass_parent_binding_field_name
 from .response import dataclass_instance_to_response_data, map_instance_to_response_data
 from .schema import (
     apply_schema_metadata,
@@ -103,6 +107,7 @@ def build_crud_viewset_class(
     order_specs: tuple[OrderSpec, ...],
     stat_specs: tuple[AggregateStatSpec, ...],
     annotation_specs: tuple[AnnotationSpec, ...],
+    parent_scope: ParentScopeSpec | None,
 ) -> type[ModelViewSet]:
     """Build the DRF ModelViewSet subclass used by CRUDFactory.
 
@@ -164,6 +169,7 @@ def build_crud_viewset_class(
         order_specs=order_specs,
         stat_specs=stat_specs,
         annotation_specs=annotation_specs,
+        parent_scope=parent_scope,
     )
     apply_schema_metadata(
         viewset_class,
@@ -369,6 +375,7 @@ def create_viewset_class(
     order_specs: tuple[OrderSpec, ...],
     stat_specs: tuple[AggregateStatSpec, ...],
     annotation_specs: tuple[AnnotationSpec, ...],
+    parent_scope: ParentScopeSpec | None,
 ) -> type[ModelViewSet]:
     """Create the actual subclass with readable action methods."""
     default_serializer = serializers_by_action.get("default", response_serializer)
@@ -391,6 +398,32 @@ def create_viewset_class(
         lookup_url_kwarg = viewset_lookup_url_kwarg
         serializer_class = create_serializer
         http_method_names = http_method_names_for_mode(read_only)
+
+        def get_parent_instance(self) -> models.Model | None:
+            if parent_scope is None:
+                return None
+            cached_parent = getattr(self, "_crudfactory_parent_instance", None)
+            if cached_parent is not None:
+                return cast(models.Model, cached_parent)
+            parent_lookup_value = self.kwargs[parent_scope.parent_lookup_url_kwarg]
+            parent_instance = get_object_or_404(
+                parent_scope.parent_model,
+                **{parent_scope.parent_lookup_field: parent_lookup_value},
+            )
+            self._crudfactory_parent_instance = parent_instance
+            return cast(models.Model, parent_instance)
+
+        def get_queryset(self) -> models.QuerySet[M]:
+            queryset = cast(models.QuerySet[M], super().get_queryset())
+            if parent_scope is None:
+                return queryset
+            parent_instance = self.get_parent_instance()
+            if parent_instance is None:
+                return queryset
+            return cast(
+                models.QuerySet[M],
+                queryset.filter(**{parent_scope.child_fk_field: parent_instance}),
+            )
 
         def get_serializer_class(self) -> type[serializers.Serializer]:
             return serializer_for_action(
@@ -445,6 +478,11 @@ def create_viewset_class(
                 request=request,
                 dataclass_type=create_dataclass,
             )
+            dto = bind_parent_scope_to_dto(
+                dto=dto,
+                parent_scope=parent_scope,
+                parent_instance=self.get_parent_instance(),
+            )
             enforce_create_acl(
                 request=request,
                 acl=acl,
@@ -476,6 +514,11 @@ def create_viewset_class(
                 serializer_class=update_serializer,
                 request=request,
                 dataclass_type=update_dataclass,
+            )
+            dto = bind_parent_scope_to_dto(
+                dto=dto,
+                parent_scope=parent_scope,
+                parent_instance=self.get_parent_instance(),
             )
             enforce_target_update_acl(
                 request=request,
@@ -523,6 +566,11 @@ def create_viewset_class(
                 dataclass_type=patch_dataclass,
                 partial=True,
                 fill_missing_optional=True,
+            )
+            dto = bind_parent_scope_to_dto(
+                dto=dto,
+                parent_scope=parent_scope,
+                parent_instance=self.get_parent_instance(),
             )
             enforce_target_patch_acl(
                 request=request,
@@ -1395,6 +1443,57 @@ def ensure_writes_are_allowed(read_only: bool, method: str) -> None:
     """Raise DRF's normal 405 error when a read-only factory receives a write."""
     if read_only:
         raise MethodNotAllowed(method)
+
+
+def bind_parent_scope_to_dto(
+    *,
+    dto: Any,
+    parent_scope: ParentScopeSpec | None,
+    parent_instance: models.Model | None,
+) -> Any:
+    """Overwrite one DTO field with the parent object from the route.
+
+    Parent-scoped endpoints must trust the URL over the request body.  This
+    keeps nested create/update/patch endpoints constrained to the parent
+    resource selected by the route and prevents clients from moving a child row
+    under a different parent just by sending a conflicting foreign-key value.
+    """
+    if parent_scope is None or parent_instance is None or not parent_scope.bind_on_create:
+        return dto
+    binding_field_name = dataclass_parent_binding_field_name(
+        dataclass_type=type(dto),
+        child_fk_field=parent_scope.child_fk_field,
+    )
+    if binding_field_name is None:
+        return dto
+    override_value = parent_binding_value(
+        dto=dto,
+        binding_field_name=binding_field_name,
+        child_fk_field=parent_scope.child_fk_field,
+        parent_instance=parent_instance,
+    )
+    return override_dataclass(dto, {binding_field_name: override_value})
+
+
+def parent_binding_value(
+    *,
+    dto: Any,
+    binding_field_name: str,
+    child_fk_field: str,
+    parent_instance: models.Model,
+) -> object:
+    """Return the value that should be injected into one bound DTO field."""
+    for dataclass_field in dataclass_fields(type(dto)):
+        if dataclass_field.name != binding_field_name:
+            continue
+        mapped_name = cast(
+            str,
+            dataclass_field.metadata.get(MODEL_FIELD_METADATA_KEY, dataclass_field.name),
+        )
+        if mapped_name == f"{child_fk_field}_id":
+            return parent_instance.pk
+        return parent_instance
+    return parent_instance
 
 
 def require_write_input(

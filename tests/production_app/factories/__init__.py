@@ -10,6 +10,7 @@ from .chargepoint_factory import (
 from .connector_factory import (
     ConnectorDetailViewSet,
     ConnectorSummaryViewSet,
+    chargepoint_connector_factory,
     connector_factory,
     connector_detail_factory,
     connector_summary_factory,
@@ -29,6 +30,7 @@ __all__ = [
     "ChargepointSummaryViewSet",
     "ConnectorDetailViewSet",
     "ConnectorSummaryViewSet",
+    "chargepoint_connector_factory",
     "LocationDetailViewSet",
     "LocationSummaryViewSet",
     "chargepoint_factory",

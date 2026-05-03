@@ -501,6 +501,82 @@ class EVInfrastructureCRUDIntegrationTests(TestCase):
         self.assertEqual([item["name"] for item in list_response.data], ["Connector 1A"])
         self.assertEqual(delete_response.status_code, 204)
 
+    def test_nested_connector_routes_stay_scoped_to_the_chargepoint(self) -> None:
+        location = self.create_location(name="Nested Hub")
+        first_chargepoint = self.create_chargepoint(
+            location=location,
+            name="Nested CP 1",
+            serial_number="NEST-CP-01",
+        )
+        second_chargepoint = self.create_chargepoint(
+            location=location,
+            name="Nested CP 2",
+            serial_number="NEST-CP-02",
+        )
+        kept_connector = self.create_connector(
+            chargepoint=first_chargepoint,
+            name="Scoped Connector",
+            status="online",
+        )
+        hidden_connector = self.create_connector(
+            chargepoint=second_chargepoint,
+            name="Foreign Connector",
+            status="faulted",
+        )
+
+        list_response = self.client.get(
+            f"/api/chargepoints/{first_chargepoint.pk}/connectors/",
+            {"ordering": "name"},
+            format="json",
+        )
+        create_response = self.client.post(
+            f"/api/chargepoints/{first_chargepoint.pk}/connectors/",
+            {
+                "chargepoint_id": second_chargepoint.pk,
+                "name": "Bound Connector",
+                "connector_type": "CCS",
+                "status": "online",
+                "is_locked": False,
+                "power_kw": "22.00",
+                "current_a": 32,
+                "voltage_v": 400,
+            },
+            format="json",
+        )
+        detail_response = self.client.get(
+            f"/api/chargepoints/{first_chargepoint.pk}/connectors/{hidden_connector.pk}/",
+            format="json",
+        )
+        update_response = self.client.put(
+            f"/api/chargepoints/{first_chargepoint.pk}/connectors/{kept_connector.pk}/",
+            {
+                "chargepoint_id": second_chargepoint.pk,
+                "name": "Scoped Connector Updated",
+                "connector_type": "CCS",
+                "status": "offline",
+                "is_locked": False,
+                "power_kw": "30.00",
+                "current_a": 40,
+                "voltage_v": 400,
+            },
+            format="json",
+        )
+
+        kept_connector.refresh_from_db()
+        created_connector = Connector.objects.get(pk=create_response.data["id"])
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(
+            [item["name"] for item in list_response.data],
+            ["Scoped Connector"],
+        )
+        self.assertEqual(create_response.status_code, 201)
+        self.assertEqual(created_connector.chargepoint_id, first_chargepoint.pk)
+        self.assertEqual(create_response.data["chargepoint_id"], first_chargepoint.pk)
+        self.assertEqual(detail_response.status_code, 404)
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(kept_connector.chargepoint_id, first_chargepoint.pk)
+        self.assertEqual(kept_connector.name, "Scoped Connector Updated")
+
     def test_connector_bulk_operations_return_structured_results(self) -> None:
         location = self.create_location(name="Bulk Hub")
         chargepoint = self.create_chargepoint(
@@ -1146,3 +1222,15 @@ class FactoryDocsServerTests(TestCase):
         self.assertIn("### `search`", body)
         self.assertIn("- Query DTO:", body)
         self.assertIn("InventorySearchQueryDTO", body)
+
+    def test_nested_connector_factory_doc_mentions_parent_scoped_route(self) -> None:
+        client = APIClient()
+
+        response = client.get("/docs/factories/chargepoint-connector-crud/")
+
+        body = response.content.decode("utf-8")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            "`GET /api/chargepoints/<int:chargepoint_pk>/connectors/`",
+            body,
+        )

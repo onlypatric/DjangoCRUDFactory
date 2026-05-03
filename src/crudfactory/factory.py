@@ -33,8 +33,14 @@ from ._nested_writes import (
     wrap_create_handler_with_nested_writes,
     wrap_update_handler_with_nested_writes,
 )
+from .parent_scopes import ParentScopeSpec, normalize_parent_scope
 from .response import map_instance_to_response_data, map_instance_to_response_dataclass
-from .routers import build_app_urlconf, build_router, router_urlpatterns
+from .routers import (
+    build_app_urlconf,
+    build_router,
+    nested_viewset_urlpatterns,
+    router_urlpatterns,
+)
 from ._simple_writes import (
     build_simple_create_handler,
     build_simple_partial_update_handler,
@@ -103,6 +109,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         permission_classes: Sequence[type[BasePermission]] | None = None,
         authentication_classes: Sequence[type[BaseAuthentication]] | None = None,
         pagination_class: type[BasePagination] | None = None,
+        parent_scope: ParentScopeSpec | None = None,
     ) -> None:
         """Store the CRUD contract and validate it immediately."""
         self.model = model
@@ -172,6 +179,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             normalize_class_sequence(authentication_classes)
         )
         self.pagination_class = pagination_class
+        self.parent_scope = normalize_parent_scope(parent_scope)
         self.filter_specs: tuple[FilterSpec, ...] = filter_specs_from_response_mapper(
             self.response_mapper
         )
@@ -209,6 +217,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             route=self.route,
             basename=self.basename,
             read_only=self.is_read_only,
+            parent_scope=self.parent_scope,
         )
 
     def get_viewset_class(self) -> type[ModelViewSet]:
@@ -234,6 +243,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             permission_classes=self.permission_classes,
             authentication_classes=self.authentication_classes,
             pagination_class=self.pagination_class,
+            parent_scope=self.parent_scope,
             filter_specs=self.filter_specs,
             order_specs=self.order_specs,
             stat_specs=self.stat_specs,
@@ -261,6 +271,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         bulk_actions: Sequence[BulkActionSpec[Any]] | None = None,
         field_subresources: Sequence[FieldSubresourceSpec] | None = None,
         acl: ACLConfig[M, object, object, object] | None = None,
+        parent_scope: ParentScopeSpec | None = None,
     ) -> CRUDFactory[M, object, object, object, ResponseDTO]:
         """Return a factory that exposes only list and retrieve endpoints."""
         return CRUDFactory(
@@ -282,6 +293,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             bulk_actions=bulk_actions,
             field_subresources=field_subresources,
             acl=acl,
+            parent_scope=parent_scope,
         )
 
     def get_router(
@@ -292,6 +304,11 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         router_class: type[SimpleRouter] = SimpleRouter,
     ) -> SimpleRouter:
         """Return a DRF router with the generated ViewSet already registered."""
+        if self.parent_scope is not None:
+            raise TypeError(
+                "Parent-scoped factories do not expose a DRF router. "
+                "Use get_urlpatterns() or get_app_urlconf() instead."
+            )
         return build_router(
             viewset_class=self.get_viewset_class(),
             route=resolve_override(route, self.route),
@@ -307,6 +324,19 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         router_class: type[SimpleRouter] = SimpleRouter,
     ) -> list[URLPattern | URLResolver]:
         """Return urlpatterns suitable for a Django app's `urls.py` file."""
+        if self.parent_scope is not None:
+            return nested_viewset_urlpatterns(
+                viewset_class=self.get_viewset_class(),
+                route=resolve_override(route, self.route),
+                basename=resolve_override(basename, self.basename),
+                lookup_url_kwarg=self.lookup_url_kwarg or self.lookup_field,
+                parent_prefix=self.parent_scope.url_prefix,
+                read_only=self.is_read_only,
+                custom_actions=self.custom_actions,
+                grouped_actions=self.grouped_actions,
+                bulk_actions=self.bulk_actions,
+                field_subresources=self.field_subresources,
+            )
         router = self.get_router(
             route=route,
             basename=basename,
