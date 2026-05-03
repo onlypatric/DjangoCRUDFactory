@@ -437,6 +437,10 @@ def bulk_action_lines(factory: CRUDFactory[Any, Any, Any, Any, Any]) -> list[str
 def dataclass_section_lines(dataclass_type: type[Any]) -> list[str]:
     type_hints = get_type_hints(dataclass_type)
     lines = [f"### `{dataclass_type.__name__}`", ""]
+    enum_summary_lines = dataclass_enum_summary_lines(dataclass_type)
+    if enum_summary_lines:
+        lines.extend(enum_summary_lines)
+        lines.append("")
     for dataclass_field in fields(dataclass_type):
         field_type = type_hints.get(dataclass_field.name, dataclass_field.type)
         lines.append(field_signature_line(dataclass_field, field_type))
@@ -447,6 +451,34 @@ def dataclass_section_lines(dataclass_type: type[Any]) -> list[str]:
     for nested_type in nested_types:
         lines.append("")
         lines.extend(dataclass_section_lines(nested_type))
+    return lines
+
+
+def dataclass_enum_summary_lines(dataclass_type: type[Any]) -> list[str]:
+    declaration = getattr(dataclass_type, "__crudfactory_enum_summary__", None)
+    if not isinstance(declaration, dict):
+        return []
+    value_field = declaration.get("value_field", "status")
+    lookup = declaration.get("lookup")
+    distinct = declaration.get("distinct", False)
+    values = declaration.get("values", {})
+    if not isinstance(values, dict):
+        values = {}
+    lookup_label = (
+        f"`{lookup}` by `{value_field}`"
+        if isinstance(lookup, str) and lookup
+        else f"root field `{value_field}`"
+    )
+    lines = [
+        "- Enum histogram summary: yes",
+        f"- Enum lookup: {lookup_label}",
+        f"- Distinct mode: `{'yes' if distinct else 'no'}`",
+    ]
+    if values:
+        lines.append(
+            "- Generated values: "
+            + ", ".join(f"`{field_name}` -> `{match_value}`" for field_name, match_value in values.items())
+        )
     return lines
 
 

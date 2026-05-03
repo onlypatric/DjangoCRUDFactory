@@ -21,6 +21,7 @@ from .bulk_actions import (
     bulk_update_action,
 )
 from .annotations import annotated_field, latest_related_value
+from .enum_stats import enum_summary
 from .factory import CRUDFactory
 from .field_subresources import FieldSubresourceSpec, field_subresource
 from ._nested_writes import NestedWriteSpec, nested_relation
@@ -75,6 +76,7 @@ __all__ = [
     "detail_action",
     "DjangoACLBackend",
     "DjangoACLService",
+    "enum_summary",
     "filterable",
     "field_subresource",
     "grouped_collection_action",

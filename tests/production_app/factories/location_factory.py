@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 
 from django.db import models
 
@@ -11,6 +12,7 @@ from ..models import Chargepoint
 from crudfactory import (
     CRUDFactory,
     count_stat,
+    enum_summary,
     field_subresource,
     filterable,
     length,
@@ -73,24 +75,29 @@ class LocationPatchDTO:
     network_name: str | None = field(default=None, metadata=length(max=120))
 
 
+class ConnectorStatusEnum(str, Enum):
+    ONLINE = "online"
+    OFFLINE = "offline"
+    FAULTED = "faulted"
+    OCCUPIED = "occupied"
+
+
+class ChargepointStatusEnum(str, Enum):
+    AVAILABLE = "Available"
+    CHARGING = "Charging"
+    UNAVAILABLE = "Unavailable"
+    FAULTED = "Faulted"
+    OFFLINE = "Offline"
+
+
+@enum_summary(
+    enum=ConnectorStatusEnum,
+    lookup="chargepoints__connectors",
+    value_field="status",
+)
 @dataclass
 class LocationConnectorStatusDTO:
-    online: int = count_stat(
-        "chargepoints__connectors",
-        filter=models.Q(chargepoints__connectors__status="online"),
-    )
-    offline: int = count_stat(
-        "chargepoints__connectors",
-        filter=models.Q(chargepoints__connectors__status="offline"),
-    )
-    faulted: int = count_stat(
-        "chargepoints__connectors",
-        filter=models.Q(chargepoints__connectors__status="faulted"),
-    )
-    occupied: int = count_stat(
-        "chargepoints__connectors",
-        filter=models.Q(chargepoints__connectors__status="occupied"),
-    )
+    pass
 
 
 @dataclass
@@ -186,34 +193,15 @@ class V3LocationAddressResponse:
     province: str | None
 
 
+@enum_summary(
+    enum=ChargepointStatusEnum,
+    lookup="chargepoints",
+    value_field="ocpp_status",
+    distinct=True,
+)
 @dataclass(frozen=True)
 class V3LocationChargepointStatsResponse:
     total: int = count_stat("chargepoints", distinct=True)
-    available: int = count_stat(
-        "chargepoints",
-        filter=models.Q(chargepoints__ocpp_status="Available"),
-        distinct=True,
-    )
-    charging: int = count_stat(
-        "chargepoints",
-        filter=models.Q(chargepoints__ocpp_status="Charging"),
-        distinct=True,
-    )
-    unavailable: int = count_stat(
-        "chargepoints",
-        filter=models.Q(chargepoints__ocpp_status="Unavailable"),
-        distinct=True,
-    )
-    faulted: int = count_stat(
-        "chargepoints",
-        filter=models.Q(chargepoints__ocpp_status="Faulted"),
-        distinct=True,
-    )
-    offline: int = count_stat(
-        "chargepoints",
-        filter=models.Q(chargepoints__ocpp_status="Offline"),
-        distinct=True,
-    )
 
 
 @dataclass(frozen=True)

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import datetime as dt
 import unittest
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields as dataclass_fields
 from collections.abc import Sequence
+from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import ANY, MagicMock, patch
 
@@ -55,6 +56,7 @@ from crudfactory import (
     choices,
     grouped_collection_action,
     count_stat,
+    enum_summary,
     field_subresource,
     filterable,
     length,
@@ -466,6 +468,22 @@ class WidgetAvailabilityStatsDTO:
     faulted: int = count_stat("id", filter=Q(secret="faulted"))
 
 
+class WidgetReadingLabelEnum(str, Enum):
+    ONLINE = "online"
+    OFFLINE = "offline"
+    FAULTED = "faulted"
+
+
+@enum_summary(
+    enum=WidgetReadingLabelEnum,
+    lookup="",
+    value_field="secret",
+)
+@dataclass
+class WidgetEnumAvailabilityStatsDTO:
+    pass
+
+
 @dataclass
 class WidgetScoreStatsDTO:
     total: int = sum_stat("count", default=0)
@@ -482,6 +500,15 @@ class WidgetStatsResponseDTO:
         default_factory=WidgetAvailabilityStatsDTO
     )
     scores: WidgetScoreStatsDTO = field(default_factory=WidgetScoreStatsDTO)
+
+
+@dataclass
+class WidgetEnumStatsResponseDTO:
+    id: int
+    name: str
+    availability: WidgetEnumAvailabilityStatsDTO = field(
+        default_factory=WidgetEnumAvailabilityStatsDTO
+    )
 
 
 @dataclass
@@ -712,6 +739,13 @@ def widget_to_stats_response(widget: Widget) -> WidgetStatsResponseDTO:
     )
 
 
+def widget_to_enum_stats_response(widget: Widget) -> WidgetEnumStatsResponseDTO:
+    return WidgetEnumStatsResponseDTO(
+        id=cast(int, widget.pk),
+        name=widget.name,
+    )
+
+
 def widget_to_unannotated_response(widget: Widget):
     return widget_to_response(widget)
 
@@ -831,6 +865,13 @@ class CRUDFactoryTests(unittest.TestCase):
     def build_stats_factory(self, **overrides: object) -> CRUDFactory:
         return self.build_factory(
             response_mapper=widget_to_stats_response,
+            queryset=Widget.objects.order_by("id"),
+            **overrides,
+        )
+
+    def build_enum_stats_factory(self, **overrides: object) -> CRUDFactory:
+        return self.build_factory(
+            response_mapper=widget_to_enum_stats_response,
             queryset=Widget.objects.order_by("id"),
             **overrides,
         )
@@ -1245,6 +1286,45 @@ class CRUDFactoryTests(unittest.TestCase):
             set(scores_serializer.fields),
             {"total", "average", "minimum", "maximum"},
         )
+
+    def test_enum_summary_generates_count_fields_from_enum(self) -> None:
+        self.assertEqual(
+            [dataclass_field.name for dataclass_field in dataclass_fields(WidgetEnumAvailabilityStatsDTO)],
+            ["online", "offline", "faulted"],
+        )
+
+    def test_enum_summary_counts_configured_values(self) -> None:
+        widget = Widget.objects.create(name="alpha", count=2, secret="online")
+        viewset_class = self.build_enum_stats_factory().get_viewset_class()
+
+        response = viewset_class.as_view({"get": "retrieve"})(
+            self.request_factory.get(f"/widgets/{widget.pk}/"),
+            pk=widget.pk,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data,
+            {
+                "id": widget.pk,
+                "name": "alpha",
+                "availability": {
+                    "online": 1,
+                    "offline": 0,
+                    "faulted": 0,
+                },
+            },
+        )
+
+    def test_enum_summary_markdown_docs_describe_histogram_fields(self) -> None:
+        markdown = self.build_enum_stats_factory(route="widgets").render_markdown_docs(
+            title="Widget Enum Factory",
+            base_path="/api",
+        )
+
+        self.assertIn("Enum histogram summary: yes", markdown)
+        self.assertIn("Enum lookup: root field `secret`", markdown)
+        self.assertIn("Generated values: `online` -> `online`", markdown)
 
     def test_annotation_fields_appear_in_list_and_detail_responses(self) -> None:
         Widget.objects.create(name="alpha", count=2)
