@@ -4,7 +4,7 @@ import datetime as dt
 from dataclasses import MISSING, Field, fields, is_dataclass
 from decimal import Decimal
 from types import UnionType
-from typing import Any, Union, get_args, get_origin, get_type_hints
+from typing import Any, Union, cast, get_args, get_origin, get_type_hints
 from uuid import UUID
 
 from rest_framework import serializers
@@ -114,6 +114,8 @@ def build_serializer_field(
     if inner_type is UUID:
         validators = validators_for_field(dataclass_field)
         return serializers.UUIDField(validators=validators, **kwargs)
+    if is_nested_dataclass_type(inner_type):
+        return build_nested_serializer_field(inner_type, field_name, kwargs)
     if origin is list:
         validators = validators_for_field(dataclass_field)
         return build_list_serializer_field(inner_type, field_name, kwargs, validators)
@@ -130,8 +132,30 @@ def build_list_serializer_field(
 ) -> serializers.ListField:
     """Build a ListField for `list[T]` where T is a supported primitive type."""
     child_type = first_type_argument_or_any(list_type)
+    if is_nested_dataclass_type(child_type):
+        serializer_class = build_serializer_from_dataclass(
+            child_type,
+            name=f"{child_type.__name__}Serializer",
+        )
+        return cast(
+            serializers.ListField,
+            serializer_class(many=True, **kwargs),
+        )
     child_field = build_list_child_field(child_type, field_name)
     return serializers.ListField(child=child_field, validators=validators, **kwargs)
+
+
+def build_nested_serializer_field(
+    dataclass_type: type[Any],
+    field_name: str,
+    kwargs: dict[str, Any],
+) -> serializers.BaseSerializer:
+    """Build a nested serializer field for one child request dataclass."""
+    serializer_class = build_serializer_from_dataclass(
+        dataclass_type,
+        name=f"{dataclass_type.__name__}Serializer",
+    )
+    return serializer_class(**kwargs)
 
 
 def build_list_child_field(field_type: Any, field_name: str) -> serializers.Field:
@@ -139,6 +163,12 @@ def build_list_child_field(field_type: Any, field_name: str) -> serializers.Fiel
     inner_type, allow_null = unwrap_optional_type(field_type)
     if allow_null:
         msg = f"List field {field_name!r} cannot use optional child values in v1."
+        raise TypeError(msg)
+    if is_nested_dataclass_type(inner_type):
+        msg = (
+            f"Nested dataclass list field {field_name!r} must be declared as a nested "
+            "serializer field, not a ListField child."
+        )
         raise TypeError(msg)
     if get_origin(inner_type) is not None:
         msg = f"Nested list field {field_name!r} is not supported in v1."
@@ -253,6 +283,11 @@ def type_supports_length(field_type: Any) -> bool:
     return field_type is str or get_origin(field_type) is list
 
 
+def is_nested_dataclass_type(field_type: Any) -> bool:
+    """Return True when a request field type is itself a dataclass type."""
+    return isinstance(field_type, type) and is_dataclass(field_type)
+
+
 def validate_partial_update_dataclass(dataclass_type: type[Any]) -> None:
     """Ensure PATCH DTOs can be safely constructed from partial request data.
 
@@ -263,6 +298,11 @@ def validate_partial_update_dataclass(dataclass_type: type[Any]) -> None:
     type_hints = get_type_hints(dataclass_type)
     for dataclass_field in fields(dataclass_type):
         field_type = type_hints.get(dataclass_field.name, dataclass_field.type)
+        inner_type, _ = unwrap_optional_type(field_type)
+        if get_origin(inner_type) is list:
+            child_type = first_type_argument_or_any(inner_type)
+            if is_nested_dataclass_type(child_type):
+                validate_partial_update_dataclass(child_type)
         _, is_optional = unwrap_optional_type(field_type)
         if is_optional or has_dataclass_default(dataclass_field):
             continue
@@ -291,6 +331,6 @@ def raise_unsupported_field_type(field_name: str, field_type: Any) -> None:
     msg = (
         f"Unsupported field type for {field_name!r}: {field_type!r}. "
         "Supported types are str, int, float, bool, date, datetime, Decimal, UUID, "
-        "Optional[T], and list[T] for primitive T."
+        "Optional[T], nested dataclasses, and list[T] for primitive or dataclass T."
     )
     raise TypeError(msg)

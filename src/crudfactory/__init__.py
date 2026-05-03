@@ -11,6 +11,7 @@ from .actions import (
     grouped_collection_action,
 )
 from .factory import CRUDFactory
+from ._nested_writes import NestedWriteSpec, nested_relation
 from .filters import filterable
 from .ordering import orderable
 from .pagination import page_number_pagination
@@ -39,6 +40,7 @@ __all__ = [
     "ACLResourceRef",
     "ACLResourceSeed",
     "GroupedCollectionSourceACL",
+    "NestedWriteSpec",
     "avg_stat",
     "choices",
     "collection_action",
@@ -53,6 +55,7 @@ __all__ = [
     "max_stat",
     "min_stat",
     "model_field",
+    "nested_relation",
     "orderable",
     "page_number_pagination",
     "range_",

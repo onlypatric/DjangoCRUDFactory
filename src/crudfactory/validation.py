@@ -11,6 +11,7 @@ from .actions import (
     GroupedCollectionActionSpec,
     GroupedCollectionSourceACL,
 )
+from ._nested_writes import NestedWriteSpec, validate_nested_write_dataclass
 from .dataclass_serializers import (
     ensure_dataclass_type,
     validate_partial_update_dataclass,
@@ -46,6 +47,7 @@ def validate_factory_configuration(
     create_handler: CreateHandler[CreateDTO, M] | None,
     update_handler: UpdateHandler[M, UpdateDTO] | None,
     partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
+    nested_writes: tuple[NestedWriteSpec, ...],
     custom_actions: tuple[CustomActionSpec[M], ...],
     grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
     acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None,
@@ -78,10 +80,33 @@ def validate_factory_configuration(
     validate_callable("create_handler", create_handler)
     validate_callable("update_handler", update_handler)
     validate_callable("partial_update_handler", partial_update_handler)
-    validate_input_dataclass("create_input", cast(type[object], create_input))
-    validate_input_dataclass("update_input", cast(type[object], update_input))
+    create_dataclass = cast(type[object], create_input)
+    update_dataclass = cast(type[object], update_input)
+    validate_input_dataclass("create_input", create_dataclass)
+    validate_input_dataclass("update_input", update_dataclass)
     patch_input = cast(type[object], partial_update_input)
     validate_input_dataclass("partial_update_input", patch_input)
+    validate_nested_write_dataclass(
+        model=model,
+        dataclass_type=create_dataclass,
+        nested_writes=nested_writes,
+        action_name="create_input",
+        partial=False,
+    )
+    validate_nested_write_dataclass(
+        model=model,
+        dataclass_type=update_dataclass,
+        nested_writes=nested_writes,
+        action_name="update_input",
+        partial=False,
+    )
+    validate_nested_write_dataclass(
+        model=model,
+        dataclass_type=patch_input,
+        nested_writes=nested_writes,
+        action_name="partial_update_input",
+        partial=True,
+    )
     validate_partial_update_dataclass(patch_input)
 
 

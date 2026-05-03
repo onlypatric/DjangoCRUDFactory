@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import fields
-from typing import Any, TypeVar, cast, get_type_hints
+from dataclasses import fields, is_dataclass
+from typing import Any, TypeVar, cast, get_args, get_origin, get_type_hints
 
 from rest_framework import serializers
 
@@ -56,7 +56,63 @@ def fill_missing_optional_fields(data: dict[str, object], dataclass_type: type[D
 def construct_dataclass(dataclass_type: type[D], data: dict[str, object]) -> D:
     """Instantiate a dataclass and convert constructor errors to DRF errors."""
     try:
-        return dataclass_type(**data)
+        return dataclass_type(
+            **dataclass_constructor_values(dataclass_type, data)
+        )
     except TypeError as exc:
         msg = f"Could not construct {dataclass_type.__name__}: {exc}"
         raise serializers.ValidationError(msg) from exc
+
+
+def dataclass_constructor_values(
+    dataclass_type: type[D],
+    data: dict[str, object],
+) -> dict[str, object]:
+    """Convert nested validated payloads into dataclass constructor values."""
+    type_hints = get_type_hints(dataclass_type)
+    constructor_values: dict[str, object] = {}
+
+    for dataclass_field in fields(cast(Any, dataclass_type)):
+        if dataclass_field.name not in data:
+            continue
+        field_type = type_hints.get(dataclass_field.name, dataclass_field.type)
+        constructor_values[dataclass_field.name] = construct_field_value(
+            field_type=field_type,
+            value=data[dataclass_field.name],
+        )
+
+    return constructor_values
+
+
+def construct_field_value(*, field_type: object, value: object) -> object:
+    """Return one dataclass field value, recursing into nested DTO shapes."""
+    inner_type, allow_null = unwrap_optional_type(field_type)
+    if value is None:
+        if allow_null:
+            return None
+        return value
+
+    if isinstance(inner_type, type) and is_dataclass(inner_type):
+        if not isinstance(value, dict):
+            return value
+        return construct_dataclass(inner_type, cast(dict[str, object], value))
+
+    origin = get_origin(inner_type)
+    if origin is list:
+        child_type = list_child_type(inner_type)
+        if not isinstance(value, list):
+            return value
+        return [
+            construct_field_value(field_type=child_type, value=child_value)
+            for child_value in value
+        ]
+
+    return value
+
+
+def list_child_type(field_type: object) -> object:
+    """Return the child item type for one `list[T]` annotation."""
+    args = get_args(field_type)
+    if not args:
+        return object
+    return args[0]

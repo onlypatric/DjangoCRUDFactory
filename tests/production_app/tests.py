@@ -350,17 +350,30 @@ class EVInfrastructureCRUDIntegrationTests(TestCase):
                 "software_version": "2.5.1",
                 "vendor_name": "Volt",
                 "max_power_kw": "150.00",
+                "connectors": [
+                    {
+                        "name": "North Plug",
+                        "connector_type": "CCS",
+                        "status": "online",
+                        "is_locked": False,
+                        "power_kw": "60.00",
+                    },
+                    {
+                        "name": "South Plug",
+                        "connector_type": "Type2",
+                        "status": "occupied",
+                        "is_locked": True,
+                        "power_kw": "30.00",
+                    },
+                ],
             },
             format="json",
         )
         chargepoint = Chargepoint.objects.get(pk=create_response.data["id"])
-        self.create_connector(chargepoint=chargepoint, name="North Plug", status="online")
-        self.create_connector(
-            chargepoint=chargepoint,
-            name="South Plug",
-            status="occupied",
-            is_locked=True,
-        )
+        first_connector = chargepoint.connectors.order_by("id").first()
+        self.assertIsNotNone(first_connector)
+        connector = cast(Connector, first_connector)
+        connector_id = cast(int, connector.pk)
 
         detail_response = self.client.get(
             reverse("inventory:chargepoint-detail", kwargs={"pk": chargepoint.pk}),
@@ -368,7 +381,10 @@ class EVInfrastructureCRUDIntegrationTests(TestCase):
         )
         patch_response = self.client.patch(
             reverse("inventory:chargepoint-detail", kwargs={"pk": chargepoint.pk}),
-            {"name": "South CP Updated"},
+            {
+                "name": "South CP Updated",
+                "connectors": [{"id": connector_id, "status": "faulted"}],
+            },
             format="json",
         )
 
@@ -379,6 +395,10 @@ class EVInfrastructureCRUDIntegrationTests(TestCase):
         )
         self.assertEqual(patch_response.status_code, 200)
         self.assertEqual(patch_response.data["name"], "South CP Updated")
+        self.assertEqual(
+            sorted(connector["status"] for connector in patch_response.data["connectors"]),
+            ["faulted", "occupied"],
+        )
 
     def test_connector_full_crud_and_actions(self) -> None:
         location = self.create_location(name="Florence Hub")

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Generic, Sequence, TypeVar, cast
+from typing import Any, Generic, Sequence, TypeVar, cast
 
 from django.db import models
 from django.urls.resolvers import URLPattern, URLResolver
@@ -16,6 +16,13 @@ from ._auto_response import build_auto_response_mapper, build_declared_response_
 from .filters import FilterSpec, filter_specs_from_response_mapper
 from .ordering import OrderSpec, order_specs_from_response_mapper
 from .markdown_docs import render_factory_markdown
+from ._nested_writes import (
+    NestedWriteSpec,
+    nested_field_names,
+    normalize_nested_writes,
+    wrap_create_handler_with_nested_writes,
+    wrap_update_handler_with_nested_writes,
+)
 from .response import map_instance_to_response_data, map_instance_to_response_dataclass
 from .routers import build_app_urlconf, build_router, router_urlpatterns
 from ._simple_writes import (
@@ -70,6 +77,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         update_handler: UpdateHandler[M, UpdateDTO] | None = None,
         partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None = None,
         writable_fields: Sequence[str] | None = None,
+        nested_writes: Sequence[NestedWriteSpec] | None = None,
         custom_actions: Sequence[CustomActionSpec[M]] | None = None,
         grouped_actions: Sequence[GroupedCollectionActionSpec[M]] | None = None,
         acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None = None,
@@ -98,11 +106,15 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         self.writable_fields: tuple[str, ...] | None = normalize_writable_fields(
             writable_fields
         )
+        self.nested_writes: tuple[NestedWriteSpec, ...] = normalize_nested_writes(
+            nested_writes
+        )
         self.create_handler = resolve_create_handler(
             model=model,
             create_input=create_input,
             create_handler=create_handler,
             writable_fields=self.writable_fields,
+            nested_writes=self.nested_writes,
             read_only=read_only,
         )
         self.update_handler = resolve_update_handler(
@@ -110,6 +122,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             update_input=update_input,
             update_handler=update_handler,
             writable_fields=self.writable_fields,
+            nested_writes=self.nested_writes,
             read_only=read_only,
         )
         self.partial_update_handler = resolve_partial_update_handler(
@@ -117,6 +130,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             partial_update_input=partial_update_input,
             partial_update_handler=partial_update_handler,
             writable_fields=self.writable_fields,
+            nested_writes=self.nested_writes,
             read_only=read_only,
         )
         self.custom_actions: tuple[CustomActionSpec[M], ...] = normalize_custom_actions(
@@ -163,6 +177,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             create_handler=self.create_handler,
             update_handler=self.update_handler,
             partial_update_handler=self.partial_update_handler,
+            nested_writes=self.nested_writes,
             custom_actions=self.custom_actions,
             grouped_actions=self.grouped_actions,
             acl=self.acl,
@@ -399,19 +414,34 @@ def resolve_create_handler(
     create_input: type[CreateDTO] | None,
     create_handler: CreateHandler[CreateDTO, M] | None,
     writable_fields: tuple[str, ...] | None,
+    nested_writes: tuple[NestedWriteSpec, ...],
     read_only: bool,
 ) -> CreateHandler[CreateDTO, M] | None:
     """Return an explicit create hook or generate one from writable_fields."""
     if create_handler is not None or read_only:
-        return create_handler
+        if create_handler is None or create_input is None or not nested_writes:
+            return create_handler
+        return wrap_create_handler_with_nested_writes(
+            model=model,
+            dataclass_type=create_input,
+            create_handler=create_handler,
+            nested_writes=nested_writes,
+        )
     if create_input is None:
         return None
-    if writable_fields is None:
-        writable_fields = writable_field_names_from_dataclass(create_input)
-    return build_simple_create_handler(
+    root_handler = auto_create_handler(
+        model=model,
+        create_input=create_input,
+        writable_fields=writable_fields,
+        nested_writes=nested_writes,
+    )
+    if not nested_writes:
+        return root_handler
+    return wrap_create_handler_with_nested_writes(
         model=model,
         dataclass_type=create_input,
-        writable_fields=writable_fields,
+        create_handler=root_handler,
+        nested_writes=nested_writes,
     )
 
 
@@ -421,19 +451,36 @@ def resolve_update_handler(
     update_input: type[UpdateDTO] | None,
     update_handler: UpdateHandler[M, UpdateDTO] | None,
     writable_fields: tuple[str, ...] | None,
+    nested_writes: tuple[NestedWriteSpec, ...],
     read_only: bool,
 ) -> UpdateHandler[M, UpdateDTO] | None:
     """Return an explicit update hook or generate one from writable_fields."""
     if update_handler is not None or read_only:
-        return update_handler
+        if update_handler is None or update_input is None or not nested_writes:
+            return update_handler
+        return wrap_update_handler_with_nested_writes(
+            model=model,
+            dataclass_type=update_input,
+            update_handler=update_handler,
+            nested_writes=nested_writes,
+            partial=False,
+        )
     if update_input is None:
         return None
-    if writable_fields is None:
-        writable_fields = writable_field_names_from_dataclass(update_input)
-    return build_simple_update_handler(
+    root_handler = auto_update_handler(
+        model=model,
+        update_input=update_input,
+        writable_fields=writable_fields,
+        nested_writes=nested_writes,
+    )
+    if not nested_writes:
+        return root_handler
+    return wrap_update_handler_with_nested_writes(
         model=model,
         dataclass_type=update_input,
-        writable_fields=writable_fields,
+        update_handler=root_handler,
+        nested_writes=nested_writes,
+        partial=False,
     )
 
 
@@ -443,20 +490,130 @@ def resolve_partial_update_handler(
     partial_update_input: type[PatchDTO] | None,
     partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
     writable_fields: tuple[str, ...] | None,
+    nested_writes: tuple[NestedWriteSpec, ...],
     read_only: bool,
 ) -> PartialUpdateHandler[M, PatchDTO] | None:
     """Return an explicit PATCH hook or generate one from writable_fields."""
     if partial_update_handler is not None or read_only:
-        return partial_update_handler
+        if partial_update_handler is None or partial_update_input is None or not nested_writes:
+            return partial_update_handler
+        return wrap_update_handler_with_nested_writes(
+            model=model,
+            dataclass_type=partial_update_input,
+            update_handler=partial_update_handler,
+            nested_writes=nested_writes,
+            partial=True,
+        )
     if partial_update_input is None:
         return None
-    if writable_fields is None:
-        writable_fields = writable_field_names_from_dataclass(partial_update_input)
+    root_handler = auto_partial_update_handler(
+        model=model,
+        partial_update_input=partial_update_input,
+        writable_fields=writable_fields,
+        nested_writes=nested_writes,
+    )
+    if not nested_writes:
+        return root_handler
+    return wrap_update_handler_with_nested_writes(
+        model=model,
+        dataclass_type=partial_update_input,
+        update_handler=root_handler,
+        nested_writes=nested_writes,
+        partial=True,
+    )
+
+
+def auto_create_handler(
+    *,
+    model: type[M],
+    create_input: type[CreateDTO],
+    writable_fields: tuple[str, ...] | None,
+    nested_writes: tuple[NestedWriteSpec, ...],
+) -> CreateHandler[CreateDTO, M]:
+    """Build the generated root create handler, excluding nested write fields."""
+    root_writable_fields = root_writable_field_names(
+        dataclass_type=create_input,
+        writable_fields=writable_fields,
+        nested_writes=nested_writes,
+    )
+    if not root_writable_fields:
+        return create_instance_with_defaults(model)
+    return build_simple_create_handler(
+        model=model,
+        dataclass_type=create_input,
+        writable_fields=root_writable_fields,
+    )
+
+
+def auto_update_handler(
+    *,
+    model: type[M],
+    update_input: type[UpdateDTO],
+    writable_fields: tuple[str, ...] | None,
+    nested_writes: tuple[NestedWriteSpec, ...],
+) -> UpdateHandler[M, UpdateDTO]:
+    """Build the generated root update handler, excluding nested write fields."""
+    root_writable_fields = root_writable_field_names(
+        dataclass_type=update_input,
+        writable_fields=writable_fields,
+        nested_writes=nested_writes,
+    )
+    if not root_writable_fields:
+        return return_instance_unchanged
+    return build_simple_update_handler(
+        model=model,
+        dataclass_type=update_input,
+        writable_fields=root_writable_fields,
+    )
+
+
+def auto_partial_update_handler(
+    *,
+    model: type[M],
+    partial_update_input: type[PatchDTO],
+    writable_fields: tuple[str, ...] | None,
+    nested_writes: tuple[NestedWriteSpec, ...],
+) -> PartialUpdateHandler[M, PatchDTO]:
+    """Build the generated PATCH handler, excluding nested write fields."""
+    root_writable_fields = root_writable_field_names(
+        dataclass_type=partial_update_input,
+        writable_fields=writable_fields,
+        nested_writes=nested_writes,
+    )
+    if not root_writable_fields:
+        return return_instance_unchanged
     return build_simple_partial_update_handler(
         model=model,
         dataclass_type=partial_update_input,
-        writable_fields=writable_fields,
+        writable_fields=root_writable_fields,
     )
+
+
+def root_writable_field_names(
+    *,
+    dataclass_type: type[object],
+    writable_fields: tuple[str, ...] | None,
+    nested_writes: tuple[NestedWriteSpec, ...],
+) -> tuple[str, ...]:
+    """Return root-model writable fields after excluding nested relation DTO fields."""
+    nested_names = nested_field_names(nested_writes)
+    configured_fields = writable_fields
+    if configured_fields is None:
+        configured_fields = writable_field_names_from_dataclass(dataclass_type)
+    return tuple(field_name for field_name in configured_fields if field_name not in nested_names)
+
+
+def create_instance_with_defaults(model: type[M]) -> CreateHandler[Any, M]:
+    """Return a create handler that relies entirely on model defaults."""
+    def create_instance(_dto: Any) -> M:
+        return cast(M, model._default_manager.create())
+
+    return create_instance
+
+
+def return_instance_unchanged(instance: M, _dto: Any) -> M:
+    """Return the existing instance when only nested relations are being handled."""
+    return instance
 
 
 def resolve_response_mapper(

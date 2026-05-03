@@ -6,7 +6,16 @@ from decimal import Decimal
 
 from django.db import models
 
-from crudfactory import CRUDFactory, filterable, length, model_field, orderable, range_, regex
+from crudfactory import (
+    CRUDFactory,
+    filterable,
+    length,
+    model_field,
+    nested_relation,
+    orderable,
+    range_,
+    regex,
+)
 
 from ..models import Chargepoint
 
@@ -24,11 +33,13 @@ class ChargepointCreateDTO:
     software_version: str = field(metadata=length(min=1, max=40))
     vendor_name: str = field(metadata=length(min=1, max=80))
     max_power_kw: Decimal = field(metadata=range_(min=0, max=500))
+    connectors: list["ChargepointConnectorWriteDTO"] = field(default_factory=list)
 
 
 @dataclass
 class ChargepointUpdateDTO:
     name: str = field(metadata={**regex(r"^[A-Za-z0-9 -]+$"), **length(min=3, max=120)})
+    connectors: list["ChargepointConnectorNestedUpdateDTO"] | None = None
 
 
 @dataclass
@@ -37,6 +48,36 @@ class ChargepointPatchDTO:
         default=None,
         metadata={**regex(r"^[A-Za-z0-9 -]+$"), **length(min=3, max=120)},
     )
+    connectors: list["ChargepointConnectorNestedPatchDTO"] | None = None
+
+
+@dataclass
+class ChargepointConnectorWriteDTO:
+    name: str = field(metadata=length(min=1, max=80))
+    connector_type: str = field(metadata=length(min=1, max=40))
+    status: str = field(metadata=length(min=1, max=20))
+    is_locked: bool = False
+    power_kw: Decimal = field(default=Decimal("0"), metadata=range_(min=0, max=500))
+
+
+@dataclass
+class ChargepointConnectorNestedUpdateDTO:
+    id: int | None = field(default=None, metadata=range_(min=1))
+    name: str | None = field(default=None, metadata=length(min=1, max=80))
+    connector_type: str | None = field(default=None, metadata=length(min=1, max=40))
+    status: str | None = field(default=None, metadata=length(min=1, max=20))
+    is_locked: bool | None = None
+    power_kw: Decimal | None = field(default=None, metadata=range_(min=0, max=500))
+
+
+@dataclass
+class ChargepointConnectorNestedPatchDTO:
+    id: int | None = field(default=None, metadata=range_(min=1))
+    name: str | None = field(default=None, metadata=length(min=1, max=80))
+    connector_type: str | None = field(default=None, metadata=length(min=1, max=40))
+    status: str | None = field(default=None, metadata=length(min=1, max=20))
+    is_locked: bool | None = None
+    power_kw: Decimal | None = field(default=None, metadata=range_(min=0, max=500))
 
 
 @dataclass
@@ -184,6 +225,14 @@ chargepoint_factory = CRUDFactory(
     create_input=ChargepointCreateDTO,
     update_input=ChargepointUpdateDTO,
     partial_update_input=ChargepointPatchDTO,
+    nested_writes=[
+        nested_relation(
+            field_name="connectors",
+            relation_name="connectors",
+            mode="merge",
+            match_by="id",
+        )
+    ],
     queryset=CHARGEPOINT_QUERYSET,
     app_name="inventory",
     route="chargepoints",

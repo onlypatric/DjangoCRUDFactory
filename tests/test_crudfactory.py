@@ -4,7 +4,7 @@ import datetime as dt
 import unittest
 from dataclasses import dataclass, field
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 from django.conf import settings
@@ -55,6 +55,7 @@ from crudfactory import (
     max_stat,
     min_stat,
     model_field,
+    nested_relation,
     orderable,
     range_,
     regex,
@@ -71,6 +72,33 @@ class Widget(models.Model):
     name = models.CharField(max_length=50)
     count = models.IntegerField(default=0)
     secret = models.CharField(max_length=50, default="")
+
+    class Meta:
+        app_label = "tests"
+
+    if TYPE_CHECKING:
+        id: int
+
+
+class NestedWidget(models.Model):
+    name = models.CharField(max_length=50)
+
+    class Meta:
+        app_label = "tests"
+
+    if TYPE_CHECKING:
+        id: int
+        children: models.Manager[NestedWidgetChild]
+
+
+class NestedWidgetChild(models.Model):
+    widget = models.ForeignKey(
+        NestedWidget,
+        on_delete=models.CASCADE,
+        related_name="children",
+    )
+    name = models.CharField(max_length=50)
+    status = models.CharField(max_length=20)
 
     class Meta:
         app_label = "tests"
@@ -197,6 +225,61 @@ class SimpleWidgetPatchDTO:
     count: int | None = field(
         default=None,
         metadata={**range_(min=0, max=10), **choices([1, 3, 8, 9])},
+    )
+
+
+@dataclass
+class NestedChildCreateDTO:
+    name: str
+    status: str
+
+
+@dataclass
+class NestedChildUpdateDTO:
+    id: int | None = None
+    name: str = ""
+    status: str = ""
+
+
+@dataclass
+class NestedChildPatchDTO:
+    id: int | None = None
+    name: str | None = None
+    status: str | None = None
+
+
+@dataclass
+class NestedWidgetCreateDTO:
+    name: str
+    children: list[NestedChildCreateDTO] = field(default_factory=list)
+
+
+@dataclass
+class NestedWidgetUpdateDTO:
+    name: str
+    children: list[NestedChildUpdateDTO]
+
+
+@dataclass
+class NestedWidgetPatchDTO:
+    name: str | None = None
+    children: list[NestedChildPatchDTO] | None = None
+
+
+@dataclass
+class NestedChildResponseDTO:
+    id: int = field(metadata=model_field("pk"))
+    name: str
+    status: str
+
+
+@dataclass
+class NestedWidgetResponseDTO:
+    id: int = field(metadata=model_field("pk"))
+    name: str
+    children: list[NestedChildResponseDTO] = field(
+        default_factory=list,
+        metadata=model_field("children"),
     )
 
 
@@ -469,15 +552,21 @@ class CRUDFactoryTests(unittest.TestCase):
         super().setUpClass()
         with connection.schema_editor() as schema_editor:
             schema_editor.create_model(Widget)
+            schema_editor.create_model(NestedWidget)
+            schema_editor.create_model(NestedWidgetChild)
 
     @classmethod
     def tearDownClass(cls) -> None:
         with connection.schema_editor() as schema_editor:
+            schema_editor.delete_model(NestedWidgetChild)
+            schema_editor.delete_model(NestedWidget)
             schema_editor.delete_model(Widget)
         super().tearDownClass()
 
     def setUp(self) -> None:
         Widget.objects.all().delete()
+        NestedWidgetChild.objects.all().delete()
+        NestedWidget.objects.all().delete()
         self.request_factory = APIRequestFactory()
         self.created_payloads: list[WidgetCreateDTO] = []
         self.updated_payloads: list[WidgetUpdateDTO] = []
@@ -540,6 +629,31 @@ class CRUDFactoryTests(unittest.TestCase):
                 backend=SelectiveACLBackend(),
                 actor_resolver=lambda request: "actor",
             ),
+        }
+        config.update(overrides)
+        return CRUDFactory(**config)
+
+    def build_nested_factory(
+        self,
+        *,
+        mode: str = "replace",
+        **overrides: object,
+    ) -> CRUDFactory:
+        config = {
+            "model": NestedWidget,
+            "response_dataclass": NestedWidgetResponseDTO,
+            "create_input": NestedWidgetCreateDTO,
+            "update_input": NestedWidgetUpdateDTO,
+            "partial_update_input": NestedWidgetPatchDTO,
+            "queryset": NestedWidget.objects.prefetch_related("children").order_by("id"),
+            "nested_writes": [
+                nested_relation(
+                    field_name="children",
+                    relation_name="children",
+                    mode=cast(Any, mode),
+                    match_by="id",
+                )
+            ],
         }
         config.update(overrides)
         return CRUDFactory(**config)
@@ -802,6 +916,148 @@ class CRUDFactoryTests(unittest.TestCase):
         self.assertIn('  "detail": "Locked connectors cannot be started."', markdown)
         self.assertIn("Filterable: `name`", markdown)
         self.assertIn("Orderable: `count`", markdown)
+
+    def test_nested_create_writes_related_children(self) -> None:
+        view = self.build_nested_factory().get_viewset_class().as_view({"post": "create"})
+
+        response = view(
+            self.request_factory.post(
+                "/nested-widgets/",
+                {
+                    "name": "parent",
+                    "children": [
+                        {"name": "child-a", "status": "online"},
+                        {"name": "child-b", "status": "offline"},
+                    ],
+                },
+                format="json",
+            )
+        )
+
+        created = NestedWidget.objects.get(pk=response.data["id"])
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(created.children.count(), 2)
+        self.assertEqual(
+            [child["name"] for child in response.data["children"]],
+            ["child-a", "child-b"],
+        )
+
+    def test_nested_full_update_replace_updates_creates_and_deletes_children(self) -> None:
+        parent = NestedWidget.objects.create(name="parent")
+        kept = NestedWidgetChild.objects.create(widget=parent, name="keep", status="online")
+        NestedWidgetChild.objects.create(widget=parent, name="drop", status="offline")
+        view = self.build_nested_factory(mode="replace").get_viewset_class().as_view(
+            {"put": "update"}
+        )
+
+        response = view(
+            self.request_factory.put(
+                f"/nested-widgets/{parent.pk}/",
+                {
+                    "name": "parent-updated",
+                    "children": [
+                        {"id": kept.pk, "name": "keep-updated", "status": "faulted"},
+                        {"name": "created", "status": "online"},
+                    ],
+                },
+                format="json",
+            ),
+            pk=parent.pk,
+        )
+
+        parent.refresh_from_db()
+        children = list(parent.children.order_by("id"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(parent.name, "parent-updated")
+        self.assertEqual(
+            [(child.name, child.status) for child in children],
+            [("keep-updated", "faulted"), ("created", "online")],
+        )
+
+    def test_nested_patch_merge_updates_selected_child_without_deleting_others(self) -> None:
+        parent = NestedWidget.objects.create(name="parent")
+        first = NestedWidgetChild.objects.create(widget=parent, name="first", status="online")
+        second = NestedWidgetChild.objects.create(widget=parent, name="second", status="offline")
+        view = self.build_nested_factory(mode="merge").get_viewset_class().as_view(
+            {"patch": "partial_update"}
+        )
+
+        response = view(
+            self.request_factory.patch(
+                f"/nested-widgets/{parent.pk}/",
+                {"children": [{"id": first.pk, "status": "faulted"}]},
+                format="json",
+            ),
+            pk=parent.pk,
+        )
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(first.status, "faulted")
+        self.assertEqual(second.status, "offline")
+
+    def test_nested_patch_without_children_leaves_existing_children_untouched(self) -> None:
+        parent = NestedWidget.objects.create(name="parent")
+        NestedWidgetChild.objects.create(widget=parent, name="first", status="online")
+        view = self.build_nested_factory(mode="merge").get_viewset_class().as_view(
+            {"patch": "partial_update"}
+        )
+
+        response = view(
+            self.request_factory.patch(
+                f"/nested-widgets/{parent.pk}/",
+                {"name": "renamed"},
+                format="json",
+            ),
+            pk=parent.pk,
+        )
+
+        parent.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(parent.name, "renamed")
+        self.assertEqual(parent.children.count(), 1)
+
+    def test_nested_duplicate_child_match_keys_return_validation_error(self) -> None:
+        parent = NestedWidget.objects.create(name="parent")
+        child = NestedWidgetChild.objects.create(widget=parent, name="first", status="online")
+        view = self.build_nested_factory(mode="merge").get_viewset_class().as_view(
+            {"patch": "partial_update"}
+        )
+
+        response = view(
+            self.request_factory.patch(
+                f"/nested-widgets/{parent.pk}/",
+                {
+                    "children": [
+                        {"id": child.pk, "status": "faulted"},
+                        {"id": child.pk, "status": "offline"},
+                    ]
+                },
+                format="json",
+            ),
+            pk=parent.pk,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("children", response.data)
+
+    def test_nested_replace_requires_match_by_configuration(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires match_by"):
+            CRUDFactory(
+                model=NestedWidget,
+                response_dataclass=NestedWidgetResponseDTO,
+                create_input=NestedWidgetCreateDTO,
+                update_input=NestedWidgetUpdateDTO,
+                partial_update_input=NestedWidgetPatchDTO,
+                nested_writes=[
+                    nested_relation(
+                        field_name="children",
+                        relation_name="children",
+                        mode="replace",
+                    )
+                ],
+            )
 
     def test_grouped_action_registration_returns_collection_route(self) -> None:
         viewset_class = self.build_grouped_factory().get_viewset_class()
