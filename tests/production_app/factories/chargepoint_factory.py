@@ -14,6 +14,7 @@ from crudfactory import (
     model_field,
     nested_relation,
     orderable,
+    related_list,
     range_,
     regex,
 )
@@ -21,9 +22,7 @@ from crudfactory import (
 from ..models import Chargepoint
 
 
-CHARGEPOINT_QUERYSET = Chargepoint.objects.select_related("location").prefetch_related(
-    "connectors"
-).order_by("id")
+CHARGEPOINT_QUERYSET = Chargepoint.objects.select_related("location").order_by("id")
 
 
 @dataclass
@@ -106,7 +105,7 @@ class ChargepointResponseDTO:
     max_power_kw: Decimal
     connectors: list[ChargepointConnectorDTO] = field(
         default_factory=list,
-        metadata=model_field("connectors"),
+        metadata=related_list("connectors"),
     )
 
 
@@ -204,7 +203,7 @@ class V3ChargepointDetailResponse:
     station_id: int | None = field(metadata=model_field("location_id"))
     connectors: list[V3ConnectorNestedResponse] = field(
         default_factory=list,
-        metadata=model_field("connectors"),
+        metadata=related_list("connectors"),
     )
     metadata: V3MetadataResponse = field(
         default_factory=V3MetadataResponse,

@@ -34,6 +34,7 @@ from ._nested_writes import (
     wrap_update_handler_with_nested_writes,
 )
 from .parent_scopes import ParentScopeSpec, normalize_parent_scope
+from .related_collections import related_prefetches_from_response_mapper
 from .response import map_instance_to_response_data, map_instance_to_response_dataclass
 from .routers import (
     build_app_urlconf,
@@ -121,6 +122,10 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             response_mapper=response_mapper,
             response_dataclass=response_dataclass,
             update_input=update_input,
+        )
+        self.related_prefetches = related_prefetches_from_response_mapper(
+            model=model,
+            response_mapper=self.response_mapper,
         )
         self.writable_fields: tuple[str, ...] | None = normalize_writable_fields(
             writable_fields
@@ -244,6 +249,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             authentication_classes=self.authentication_classes,
             pagination_class=self.pagination_class,
             parent_scope=self.parent_scope,
+            related_prefetches=self.related_prefetches,
             filter_specs=self.filter_specs,
             order_specs=self.order_specs,
             stat_specs=self.stat_specs,

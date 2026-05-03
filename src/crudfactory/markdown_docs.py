@@ -20,6 +20,7 @@ from .annotations import (
 from .filters import FILTER_METADATA_KEY, FilterDeclaration
 from .field_subresources import field_subresource_payload_label
 from .ordering import ORDERING_QUERY_PARAM, ORDER_METADATA_KEY
+from .related_collections import RELATED_LIST_METADATA_KEY, RelatedListDeclaration
 from .source_queries import SOURCE_FILTER_METADATA_KEY, SOURCE_ORDER_METADATA_KEY
 from .stats import STAT_METADATA_KEY, AggregateStatDeclaration
 from .validators import (
@@ -540,6 +541,17 @@ def field_metadata_lines(dataclass_field: Field[Any]) -> list[str]:
             lines.append(
                 "Choices: " + ", ".join(f"`{choice}`" for choice in choices)
             )
+    if RELATED_LIST_METADATA_KEY in metadata:
+        declaration = metadata[RELATED_LIST_METADATA_KEY]
+        if isinstance(declaration, RelatedListDeclaration):
+            lines.append(f"Related list source: `{declaration.relation_name}`")
+            if declaration.queryset is not None:
+                lines.append(
+                    "Related list queryset: "
+                    f"`{declaration.queryset.model.__name__}` with declarative prefetch"
+                )
+            else:
+                lines.append("Related list queryset: default related manager with declarative prefetch")
     return lines
 
 

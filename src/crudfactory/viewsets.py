@@ -51,6 +51,7 @@ from ._simple_writes import MODEL_FIELD_METADATA_KEY
 from .inputs import override_dataclass, project_dataclass, serializer_to_dataclass
 from .ordering import OrderSpec, apply_order_specs
 from .parent_scopes import ParentScopeSpec, dataclass_parent_binding_field_name
+from .related_collections import apply_related_prefetches
 from .response import dataclass_instance_to_response_data, map_instance_to_response_data
 from .schema import (
     apply_schema_metadata,
@@ -108,6 +109,7 @@ def build_crud_viewset_class(
     stat_specs: tuple[AggregateStatSpec, ...],
     annotation_specs: tuple[AnnotationSpec, ...],
     parent_scope: ParentScopeSpec | None,
+    related_prefetches: tuple[models.Prefetch, ...],
 ) -> type[ModelViewSet]:
     """Build the DRF ModelViewSet subclass used by CRUDFactory.
 
@@ -170,6 +172,7 @@ def build_crud_viewset_class(
         stat_specs=stat_specs,
         annotation_specs=annotation_specs,
         parent_scope=parent_scope,
+        related_prefetches=related_prefetches,
     )
     apply_schema_metadata(
         viewset_class,
@@ -376,6 +379,7 @@ def create_viewset_class(
     stat_specs: tuple[AggregateStatSpec, ...],
     annotation_specs: tuple[AnnotationSpec, ...],
     parent_scope: ParentScopeSpec | None,
+    related_prefetches: tuple[models.Prefetch, ...],
 ) -> type[ModelViewSet]:
     """Create the actual subclass with readable action methods."""
     default_serializer = serializers_by_action.get("default", response_serializer)
@@ -384,7 +388,10 @@ def create_viewset_class(
     patch_serializer = serializers_by_action.get("partial_update", default_serializer)
     viewset_queryset = annotate_queryset_with_annotation_specs(
         annotate_queryset_with_stat_specs(
-            queryset_for_viewset(model, queryset),
+            apply_related_prefetches(
+                queryset_for_viewset(model, queryset),
+                related_prefetches,
+            ),
             stat_specs,
         ),
         annotation_specs,

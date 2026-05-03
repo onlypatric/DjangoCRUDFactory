@@ -6,6 +6,8 @@ from decimal import Decimal
 
 from django.db import models
 
+from ..models import Chargepoint
+
 from crudfactory import (
     CRUDFactory,
     count_stat,
@@ -14,6 +16,7 @@ from crudfactory import (
     length,
     model_field,
     orderable,
+    related_list,
     regex,
     sum_stat,
 )
@@ -21,10 +24,8 @@ from crudfactory import (
 from ..models import Location
 
 
-LOCATION_QUERYSET = Location.objects.prefetch_related("chargepoints__connectors").order_by("id")
-V3_LOCATION_QUERYSET = Location.objects.filter(active=True).prefetch_related(
-    "chargepoints__connectors"
-).order_by("name", "id")
+LOCATION_QUERYSET = Location.objects.order_by("id")
+V3_LOCATION_QUERYSET = Location.objects.filter(active=True).order_by("name", "id")
 
 
 @dataclass
@@ -278,7 +279,10 @@ class V3LocationDetailResponse:
     )
     chargepoints: list[V3LocationDetailChargepointResponse] = field(
         default_factory=list,
-        metadata=model_field("chargepoints"),
+        metadata=related_list(
+            "chargepoints",
+            queryset=Chargepoint.objects.select_related("location"),
+        ),
     )
     metadata: V3MetadataResponse = field(
         default_factory=V3MetadataResponse,

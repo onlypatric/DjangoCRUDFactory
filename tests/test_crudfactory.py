@@ -66,6 +66,7 @@ from crudfactory import (
     parent_scope,
     range_,
     regex,
+    related_list,
     source_filterable,
     source_orderable,
     sum_stat,
@@ -339,6 +340,19 @@ class NestedWidgetChildResponseDTO:
     widget_id: int
     name: str
     status: str
+
+
+@dataclass
+class FilteredNestedWidgetResponseDTO:
+    id: int = field(metadata=model_field("pk"))
+    name: str
+    children: list[NestedChildResponseDTO] = field(
+        default_factory=list,
+        metadata=related_list(
+            "children",
+            queryset=NestedWidgetChild.objects.filter(status="online").order_by("id"),
+        ),
+    )
 
 
 @dataclass
@@ -974,6 +988,22 @@ class CRUDFactoryTests(unittest.TestCase):
         config.update(overrides)
         return CRUDFactory(**config)
 
+    def build_filtered_related_factory(
+        self,
+        **overrides: object,
+    ) -> CRUDFactory:
+        config = {
+            "response_dataclass": FilteredNestedWidgetResponseDTO,
+            "queryset": NestedWidget.objects.order_by("id"),
+            "route": "filtered-widgets",
+            "basename": "filtered-widget",
+        }
+        config.update(overrides)
+        return CRUDFactory.read_only(
+            model=NestedWidget,
+            **config,
+        )
+
     def create_widget(self, dto: WidgetCreateDTO) -> Widget:
         self.created_payloads.append(dto)
         return Widget.objects.create(
@@ -1336,6 +1366,52 @@ class CRUDFactoryTests(unittest.TestCase):
                 "latest_value": None,
                 "latest_reading": {"value": None, "label": None},
             },
+        )
+
+    def test_related_list_can_declare_filtered_queryset(self) -> None:
+        widget = NestedWidget.objects.create(name="parent")
+        NestedWidgetChild.objects.create(widget=widget, name="online-child", status="online")
+        NestedWidgetChild.objects.create(widget=widget, name="offline-child", status="offline")
+        viewset_class = self.build_filtered_related_factory().get_viewset_class()
+
+        response = viewset_class.as_view({"get": "retrieve"})(
+            self.request_factory.get(f"/filtered-widgets/{widget.pk}/"),
+            pk=widget.pk,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data,
+            {
+                "id": widget.pk,
+                "name": "parent",
+                "children": [
+                    {
+                        "id": ANY,
+                        "name": "online-child",
+                        "status": "online",
+                    }
+                ],
+            },
+        )
+
+    def test_related_list_prefetches_are_registered_on_generated_queryset(self) -> None:
+        factory = self.build_filtered_related_factory()
+        prefetch_lookups = factory.related_prefetches
+
+        self.assertEqual(len(prefetch_lookups), 1)
+        self.assertEqual(prefetch_lookups[0].prefetch_to, "children")
+
+    def test_related_list_markdown_docs_include_prefetch_metadata(self) -> None:
+        markdown = self.build_filtered_related_factory().render_markdown_docs(
+            title="Filtered Widget Factory",
+            base_path="/api",
+        )
+
+        self.assertIn("Related list source: `children`", markdown)
+        self.assertIn(
+            "Related list queryset: `NestedWidgetChild` with declarative prefetch",
+            markdown,
         )
 
     def test_factory_can_render_markdown_contract_docs(self) -> None:
