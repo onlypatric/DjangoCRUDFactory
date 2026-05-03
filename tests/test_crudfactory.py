@@ -1815,6 +1815,35 @@ class CRUDFactoryTests(unittest.TestCase):
         self.assertEqual(widget.name, "alpha")
         self.assertEqual(widget.secret, "keep-secret")
 
+    def test_field_subresource_patch_merge_rejects_non_object_payload(self) -> None:
+        widget = Widget.objects.create(
+            name="alpha",
+            count=1,
+            metadata={"source": "seed", "enabled": True},
+        )
+        view = self.build_factory(
+            field_subresources=[
+                field_subresource(
+                    field_name="metadata",
+                    patch_mode="merge",
+                )
+            ]
+        ).get_viewset_class().as_view({"patch": "metadata"})
+
+        response = view(
+            self.request_factory.patch(
+                f"/widgets/{widget.pk}/metadata/",
+                ["not", "a", "dict"],
+                format="json",
+            ),
+            pk=widget.pk,
+        )
+
+        widget.refresh_from_db()
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("metadata", response.data)
+        self.assertEqual(widget.metadata, {"source": "seed", "enabled": True})
+
     def test_field_subresource_markdown_docs_include_endpoint_contract(self) -> None:
         markdown = self.build_factory(
             route="widgets",
@@ -2147,6 +2176,16 @@ class CRUDFactoryTests(unittest.TestCase):
             captured,
             [WidgetGroupQueryDTO(name="alpha", count=3, label="beta")],
         )
+
+    def test_grouped_action_invalid_query_params_return_400(self) -> None:
+        viewset_class = self.build_grouped_factory().get_viewset_class()
+
+        response = viewset_class.as_view({"get": "grouped"})(
+            self.request_factory.get("/widgets/grouped/?count=not-an-int")
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("count", response.data)
 
     def test_grouped_action_applies_source_filter_and_order_specs(self) -> None:
         Widget.objects.create(name="beta", count=1)
@@ -2748,6 +2787,20 @@ class CRUDFactoryTests(unittest.TestCase):
             [item["id"] for item in response.data],
             [visible.pk, archived.pk],
         )
+
+    def test_soft_delete_lifecycle_ignores_invalid_include_archived_flag(self) -> None:
+        visible = Widget.objects.create(name="alpha", count=1)
+        Widget.objects.create(
+            name="omega",
+            count=9,
+            deleted_at=dt.datetime.now(dt.timezone.utc),
+        )
+        view = self.build_soft_delete_factory().get_viewset_class().as_view({"get": "list"})
+
+        response = view(self.request_factory.get("/widgets/?include_archived=definitely-not-bool"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["id"] for item in response.data], [visible.pk])
 
     def test_soft_delete_lifecycle_restore_action_reactivates_archived_row(self) -> None:
         archived = Widget.objects.create(
