@@ -12,6 +12,11 @@ from rest_framework.viewsets import ModelViewSet
 
 from .acl import ACLConfig
 from .actions import CustomActionSpec, GroupedCollectionActionSpec
+from .annotations import (
+    annotate_queryset_with_annotation_specs,
+    annotation_specs_from_response_mapper,
+    instance_with_annotation_specs,
+)
 from ._auto_response import build_auto_response_mapper, build_declared_response_mapper
 from .filters import FilterSpec, filter_specs_from_response_mapper
 from .field_subresources import (
@@ -171,6 +176,9 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         self.stat_specs: tuple[AggregateStatSpec, ...] = stat_specs_from_response_mapper(
             self.response_mapper
         )
+        self.annotation_specs = annotation_specs_from_response_mapper(
+            self.response_mapper
+        )
 
         self.validate_configuration()
 
@@ -221,6 +229,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             filter_specs=self.filter_specs,
             order_specs=self.order_specs,
             stat_specs=self.stat_specs,
+            annotation_specs=self.annotation_specs,
         )
 
     @classmethod
@@ -323,13 +332,22 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         """Return JSON-ready response data for one model instance."""
         response_instance = instance_with_stat_annotations(
             instance=instance,
-            queryset=queryset_for_factory_method(self.model, self.queryset),
+            queryset=annotate_queryset_with_annotation_specs(
+                queryset_for_factory_method(self.model, self.queryset),
+                self.annotation_specs,
+            ),
             stat_specs=self.stat_specs,
+        )
+        response_instance = instance_with_annotation_specs(
+            instance=response_instance,
+            queryset=queryset_for_factory_method(self.model, self.queryset),
+            annotation_specs=self.annotation_specs,
         )
         return map_instance_to_response_data(
             response_instance,
             self.response_mapper,
             self.stat_specs,
+            self.annotation_specs,
         )
 
     def render_markdown_docs(

@@ -25,10 +25,13 @@ from rest_framework.test import APIClient
 from .models import (
     Chargepoint,
     Connector,
+    InventoryItem,
     Location,
     MonitoringHost,
     MonitoringItem,
     MonitoringStation,
+    StatusReading,
+    StockLevel,
 )
 
 
@@ -290,6 +293,13 @@ class EVInfrastructureCRUDIntegrationTests(TestCase):
             voltage_v=400,
             stats={"sessions_today": 2},
             metadata={"source": "test"},
+        )
+
+    def create_inventory_item(self, name: str = "Boiler Sensor") -> InventoryItem:
+        return InventoryItem.objects.create(
+            name=name,
+            quantity=12,
+            internal_code=f"code-{name.lower().replace(' ', '-')}",
         )
 
     def test_location_endpoint_returns_connector_status_overview(self) -> None:
@@ -559,6 +569,36 @@ class EVInfrastructureCRUDIntegrationTests(TestCase):
         )
         self.assertEqual(station_patch_response.status_code, 200)
         self.assertEqual(station_patch_response.data["description"], "Updated v3 description")
+
+    def test_inventory_item_annotations_expose_latest_history_values(self) -> None:
+        item = self.create_inventory_item()
+        StatusReading.objects.create(item=item, state="online", duration=5)
+        StatusReading.objects.create(item=item, state="faulted", duration=12)
+        StockLevel.objects.create(
+            item=item,
+            warehouse_name="Main Warehouse",
+            available=7,
+        )
+
+        list_response = self.client.get("/api/inventory-items/", format="json")
+        detail_response = self.client.get(
+            reverse("inventory:inventory-item-detail", kwargs={"pk": item.pk}),
+            format="json",
+        )
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(
+            detail_response.data,
+            {
+                "id": item.pk,
+                "name": "Boiler Sensor",
+                "quantity": 12,
+                "latest_state": "faulted",
+                "latest_duration": 12,
+                "has_stock_level": True,
+            },
+        )
 
 
 class ConnectorACLIntegrationTests(TestCase):

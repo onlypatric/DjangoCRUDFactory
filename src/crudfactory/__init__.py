@@ -10,6 +10,7 @@ from .actions import (
     detail_action,
     grouped_collection_action,
 )
+from .annotations import annotated_field
 from .factory import CRUDFactory
 from .field_subresources import FieldSubresourceSpec, field_subresource
 from ._nested_writes import NestedWriteSpec, nested_relation
@@ -44,6 +45,7 @@ __all__ = [
     "GroupedCollectionSourceACL",
     "NestedWriteSpec",
     "avg_stat",
+    "annotated_field",
     "choices",
     "collection_action",
     "count_stat",

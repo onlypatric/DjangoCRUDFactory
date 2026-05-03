@@ -5,6 +5,7 @@ from typing import Any, cast
 
 from django.db import models
 
+from .annotations import AnnotationSpec, apply_annotation_values_to_response_data
 from .stats import AggregateStatSpec, apply_stat_values_to_response_data
 from .types import M, ResponseDTO, ResponseMapper
 
@@ -28,6 +29,7 @@ def map_instance_to_response_data(
     instance: M,
     response_mapper: ResponseMapper[M, ResponseDTO],
     stat_specs: tuple[AggregateStatSpec, ...] = (),
+    annotation_specs: tuple[AnnotationSpec, ...] = (),
 ) -> dict[str, object]:
     """Return JSON-ready response data for one model instance.
 
@@ -39,9 +41,14 @@ def map_instance_to_response_data(
     dto = map_instance_to_response_dataclass(instance, response_mapper)
     ensure_dataclass_instance(dto)
     data = cast(dict[str, object], asdict(cast(Any, dto)))
+    data = apply_annotation_values_to_response_data(
+        data=data,
+        instance=cast(models.Model, instance),
+        annotation_specs=annotation_specs,
+    )
     return apply_stat_values_to_response_data(
         data=data,
-        instance=instance,
+        instance=cast(models.Model, instance),
         stat_specs=stat_specs,
     )
 

@@ -10,6 +10,7 @@ from .factories import (
     connector_detail_factory,
     connector_factory,
     connector_summary_factory,
+    inventory_item_factory,
     location_detail_factory,
     location_factory,
     location_summary_factory,
@@ -39,6 +40,11 @@ FACTORY_DOCS: tuple[FactoryDocEntry, ...] = (
         slug="connector-crud",
         title="Connector CRUD Factory",
         factory=connector_factory,
+    ),
+    FactoryDocEntry(
+        slug="inventory-item-readonly",
+        title="Inventory Item ReadOnly Factory",
+        factory=inventory_item_factory,
     ),
     FactoryDocEntry(
         slug="monitoring-item-readonly",

@@ -8,6 +8,7 @@ from uuid import UUID
 
 from django.db import models
 
+from .annotations import annotation_value_for_path, field_has_annotation
 from ._simple_writes import (
     MODEL_FIELD_METADATA_KEY,
     model_field_name_from_metadata,
@@ -185,6 +186,7 @@ def values_for_declared_response(
     *,
     source: object,
     dataclass_type: type[Any],
+    path: tuple[str, ...] = (),
 ) -> dict[str, object]:
     """Build one declared response dataclass from a model, dict, or related row."""
     type_hints = get_type_hints(dataclass_type)
@@ -195,6 +197,7 @@ def values_for_declared_response(
             source=source,
             dataclass_field=dataclass_field,
             field_type=field_type,
+            path=(*path, dataclass_field.name),
         )
     return values
 
@@ -204,8 +207,15 @@ def value_for_declared_response_field(
     source: object,
     dataclass_field: Field[Any],
     field_type: Any,
+    path: tuple[str, ...],
 ) -> object:
     """Return one declared response field value, recursing when needed."""
+    if field_has_annotation(dataclass_field):
+        return annotation_value_for_path(
+            instance=source,
+            dataclass_field=dataclass_field,
+            path=path,
+        )
     if field_declares_stat(dataclass_field):
         return default_value_for_dataclass_field(dataclass_field)
 
@@ -216,6 +226,7 @@ def value_for_declared_response_field(
             **values_for_declared_response(
                 source=nested_source,
                 dataclass_type=nested_dataclass_type,
+                path=path,
             )
         )
 
@@ -227,6 +238,7 @@ def value_for_declared_response_field(
                 **values_for_declared_response(
                     source=item,
                     dataclass_type=list_child_dataclass_type,
+                    path=path,
                 )
             )
             for item in iterable_source

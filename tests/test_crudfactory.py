@@ -5,7 +5,7 @@ import unittest
 from dataclasses import dataclass, field
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from django.conf import settings
 from django.test import SimpleTestCase, override_settings
@@ -31,7 +31,7 @@ if not settings.configured:
 
 import django
 from django.db import connection, models
-from django.db.models import Q
+from django.db.models import Case, Exists, OuterRef, Q, Subquery, Value, When
 from rest_framework.permissions import BasePermission
 from rest_framework.routers import SimpleRouter
 from rest_framework import serializers
@@ -47,6 +47,7 @@ from crudfactory import (
     CRUDFactory,
     GroupedCollectionSourceACL,
     avg_stat,
+    annotated_field,
     choices,
     grouped_collection_action,
     count_stat,
@@ -415,6 +416,46 @@ class WidgetStatsResponseDTO:
 
 
 @dataclass
+class WidgetAnnotatedResponseDTO:
+    id: int
+    name: str
+    mirrored_count: int = field(
+        metadata=annotated_field(
+            annotation=Subquery(
+                Widget.objects.filter(pk=OuterRef("pk")).values("count")[:1]
+            ),
+            default=0,
+        )
+    )
+    state_label: str = field(
+        metadata=annotated_field(
+            annotation=Case(
+                When(count__gte=5, then=Value("busy")),
+                default=Value("idle"),
+            ),
+            default="idle",
+        )
+    )
+    has_high_count: bool = field(
+        metadata=annotated_field(
+            annotation=Exists(Widget.objects.filter(pk=OuterRef("pk"), count__gte=8)),
+            default=False,
+        )
+    )
+
+
+@dataclass
+class InvalidWidgetAnnotationResponseDTO:
+    id: int
+    bad_value: int = field(
+        metadata=annotated_field(
+            annotation=cast(Any, "not-a-django-expression"),
+            default=0,
+        )
+    )
+
+
+@dataclass
 class InvalidNestedResponseDTO:
     values_by_name: dict[str, int]
 
@@ -594,6 +635,16 @@ class CRUDFactoryTests(unittest.TestCase):
             queryset=Widget.objects.order_by("id"),
             **overrides,
         )
+
+    def build_annotation_factory(self, **overrides: object) -> CRUDFactory:
+        config = {
+            "model": Widget,
+            "response_dataclass": WidgetAnnotatedResponseDTO,
+            "queryset": Widget.objects.order_by("id"),
+            "read_only": True,
+        }
+        config.update(overrides)
+        return CRUDFactory(**config)
 
     def build_simple_factory(self, **overrides: object) -> CRUDFactory:
         config = {
@@ -902,6 +953,57 @@ class CRUDFactoryTests(unittest.TestCase):
             {"total", "average", "minimum", "maximum"},
         )
 
+    def test_annotation_fields_appear_in_list_and_detail_responses(self) -> None:
+        Widget.objects.create(name="alpha", count=2)
+        busy = Widget.objects.create(name="beta", count=9)
+        viewset_class = self.build_annotation_factory().get_viewset_class()
+
+        list_response = viewset_class.as_view({"get": "list"})(
+            self.request_factory.get("/widgets/")
+        )
+        detail_response = viewset_class.as_view({"get": "retrieve"})(
+            self.request_factory.get(f"/widgets/{busy.pk}/"),
+            pk=busy.pk,
+        )
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(
+            list_response.data,
+            [
+                {
+                    "id": ANY,
+                    "name": "alpha",
+                    "mirrored_count": 2,
+                    "state_label": "idle",
+                    "has_high_count": False,
+                },
+                {
+                    "id": ANY,
+                    "name": "beta",
+                    "mirrored_count": 9,
+                    "state_label": "busy",
+                    "has_high_count": True,
+                },
+            ],
+        )
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(
+            detail_response.data,
+            {
+                "id": busy.pk,
+                "name": "beta",
+                "mirrored_count": 9,
+                "state_label": "busy",
+                "has_high_count": True,
+            },
+        )
+
+    def test_annotation_metadata_validation_rejects_non_expression_values(self) -> None:
+        with self.assertRaisesRegex(TypeError, "requires a Django expression"):
+            self.build_annotation_factory(
+                response_dataclass=InvalidWidgetAnnotationResponseDTO,
+            )
+
     def test_factory_can_render_markdown_contract_docs(self) -> None:
         markdown = self.build_factory(route="widgets", basename="widget").render_markdown_docs(
             title="Widget Factory",
@@ -918,6 +1020,14 @@ class CRUDFactoryTests(unittest.TestCase):
         self.assertIn('  "detail": "Locked connectors cannot be started."', markdown)
         self.assertIn("Filterable: `name`", markdown)
         self.assertIn("Orderable: `count`", markdown)
+
+    def test_annotation_markdown_docs_label_annotated_response_fields(self) -> None:
+        markdown = self.build_annotation_factory(route="widgets").render_markdown_docs(
+            title="Widget Factory",
+            base_path="/api",
+        )
+
+        self.assertIn("Annotation: declarative queryset annotation", markdown)
 
     def test_field_subresource_get_returns_raw_field_payload(self) -> None:
         widget = Widget.objects.create(

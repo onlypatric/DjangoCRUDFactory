@@ -11,6 +11,7 @@ from .factories import (
     LocationSummaryViewSet,
     chargepoint_factory,
     connector_factory,
+    inventory_item_factory,
     location_factory,
     monitoring_item_factory,
 )
@@ -20,6 +21,7 @@ urlpatterns = [
     *location_factory.get_urlpatterns(),
     *chargepoint_factory.get_urlpatterns(),
     *connector_factory.get_urlpatterns(),
+    *inventory_item_factory.get_urlpatterns(),
     *monitoring_item_factory.get_urlpatterns(),
     # These explicit V3 routes are compatibility endpoints. They sit on the
     # same models as the main CRUD API, but they deliberately expose different

@@ -12,6 +12,7 @@ from ._simple_writes import (
     MODEL_READ_TRANSFORM_METADATA_KEY,
     MODEL_WRITE_TRANSFORM_METADATA_KEY,
 )
+from .annotations import ANNOTATION_METADATA_KEY, AnnotationDeclaration
 from .filters import FILTER_METADATA_KEY, FilterDeclaration
 from .field_subresources import field_subresource_payload_label
 from .ordering import ORDERING_QUERY_PARAM, ORDER_METADATA_KEY
@@ -432,6 +433,13 @@ def field_metadata_lines(dataclass_field: Field[Any]) -> list[str]:
             if declaration.distinct:
                 stat_bits.append("distinct")
             lines.append("Stat: " + ", ".join(stat_bits))
+    if ANNOTATION_METADATA_KEY in metadata:
+        declaration = metadata[ANNOTATION_METADATA_KEY]
+        if isinstance(declaration, AnnotationDeclaration):
+            annotation_bits = ["declarative queryset annotation"]
+            if declaration.alias is not None:
+                annotation_bits.append(f"logical alias `{declaration.alias}`")
+            lines.append("Annotation: " + ", ".join(annotation_bits))
     if REGEX_METADATA_KEY in metadata:
         lines.append(f"Regex: `{metadata[REGEX_METADATA_KEY]}`")
     if MIN_VALUE_METADATA_KEY in metadata or MAX_VALUE_METADATA_KEY in metadata:

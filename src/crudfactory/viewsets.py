@@ -24,6 +24,11 @@ from ._acl_runtime import (
 )
 from .acl import ACLActionConfig, ACLConfig
 from .actions import CustomActionSpec, GroupedCollectionActionSpec
+from .annotations import (
+    AnnotationSpec,
+    annotate_queryset_with_annotation_specs,
+    instance_with_annotation_specs,
+)
 from .dataclass_serializers import build_serializer_from_dataclass
 from .filters import FilterSpec, apply_filter_specs, response_dataclass_from_mapper
 from .field_subresources import (
@@ -89,6 +94,7 @@ def build_crud_viewset_class(
     filter_specs: tuple[FilterSpec, ...],
     order_specs: tuple[OrderSpec, ...],
     stat_specs: tuple[AggregateStatSpec, ...],
+    annotation_specs: tuple[AnnotationSpec, ...],
 ) -> type[ModelViewSet]:
     """Build the DRF ModelViewSet subclass used by CRUDFactory.
 
@@ -140,6 +146,7 @@ def build_crud_viewset_class(
         filter_specs=filter_specs,
         order_specs=order_specs,
         stat_specs=stat_specs,
+        annotation_specs=annotation_specs,
     )
     apply_schema_metadata(
         viewset_class,
@@ -306,15 +313,19 @@ def create_viewset_class(
     filter_specs: tuple[FilterSpec, ...],
     order_specs: tuple[OrderSpec, ...],
     stat_specs: tuple[AggregateStatSpec, ...],
+    annotation_specs: tuple[AnnotationSpec, ...],
 ) -> type[ModelViewSet]:
     """Create the actual subclass with readable action methods."""
     default_serializer = serializers_by_action.get("default", response_serializer)
     create_serializer = serializers_by_action.get("create", default_serializer)
     update_serializer = serializers_by_action.get("update", default_serializer)
     patch_serializer = serializers_by_action.get("partial_update", default_serializer)
-    viewset_queryset = annotate_queryset_with_stat_specs(
-        queryset_for_viewset(model, queryset),
-        stat_specs,
+    viewset_queryset = annotate_queryset_with_annotation_specs(
+        annotate_queryset_with_stat_specs(
+            queryset_for_viewset(model, queryset),
+            stat_specs,
+        ),
+        annotation_specs,
     )
     viewset_lookup_field = lookup_field
     viewset_lookup_url_kwarg = lookup_url_kwarg
@@ -351,6 +362,7 @@ def create_viewset_class(
                 queryset=filtered_collection,
                 response_mapper=response_mapper,
                 stat_specs=stat_specs,
+                annotation_specs=annotation_specs,
             )
 
         def retrieve(self, request: Request, *args: Any, **kwargs: Any) -> Response:
@@ -362,7 +374,12 @@ def create_viewset_class(
                 instance=instance,
                 resolver=resource_ref_from_instance(acl),
             )
-            return retrieve_response(instance, response_mapper, stat_specs)
+            return retrieve_response(
+                instance,
+                response_mapper,
+                stat_specs,
+                annotation_specs,
+            )
 
         def create(self, request: Request, *args: Any, **kwargs: Any) -> Response:
             ensure_writes_are_allowed(read_only, "POST")
@@ -385,6 +402,7 @@ def create_viewset_class(
                 instance=instance,
                 response_mapper=response_mapper,
                 stat_specs=stat_specs,
+                annotation_specs=annotation_specs,
             )
 
         def update(self, request: Request, *args: Any, **kwargs: Any) -> Response:
@@ -418,6 +436,7 @@ def create_viewset_class(
                 instance=updated_instance,
                 response_mapper=response_mapper,
                 stat_specs=stat_specs,
+                annotation_specs=annotation_specs,
             )
 
         def partial_update(
@@ -464,6 +483,7 @@ def create_viewset_class(
                 instance=updated_instance,
                 response_mapper=response_mapper,
                 stat_specs=stat_specs,
+                annotation_specs=annotation_specs,
             )
 
         def destroy(self, request: Request, *args: Any, **kwargs: Any) -> Response:
@@ -827,14 +847,15 @@ def list_response(
     queryset: models.QuerySet[M] | Sequence[M],
     response_mapper: ResponseMapper[M, ResponseDTO],
     stat_specs: tuple[AggregateStatSpec, ...],
+    annotation_specs: tuple[AnnotationSpec, ...],
 ) -> Response:
     """Return a DTO-shaped response for a list action, with pagination support."""
     page = viewset.paginate_queryset(cast(Any, queryset))
     if page is not None:
-        data = response_data_for_many(page, response_mapper, stat_specs)
+        data = response_data_for_many(page, response_mapper, stat_specs, annotation_specs)
         return viewset.get_paginated_response(data)
 
-    data = response_data_for_many(queryset, response_mapper, stat_specs)
+    data = response_data_for_many(queryset, response_mapper, stat_specs, annotation_specs)
     return Response(data)
 
 
@@ -842,9 +863,12 @@ def retrieve_response(
     instance: M,
     response_mapper: ResponseMapper[M, ResponseDTO],
     stat_specs: tuple[AggregateStatSpec, ...],
+    annotation_specs: tuple[AnnotationSpec, ...],
 ) -> Response:
     """Return a DTO-shaped response for one object."""
-    return Response(response_data_for_one(instance, response_mapper, stat_specs))
+    return Response(
+        response_data_for_one(instance, response_mapper, stat_specs, annotation_specs)
+    )
 
 
 def create_response(
@@ -853,15 +877,22 @@ def create_response(
     instance: M,
     response_mapper: ResponseMapper[M, ResponseDTO],
     stat_specs: tuple[AggregateStatSpec, ...],
+    annotation_specs: tuple[AnnotationSpec, ...],
 ) -> Response:
     """Return a DTO-shaped 201 response after a create hook succeeds."""
     response_instance = response_instance_with_stats(
         viewset=viewset,
         instance=instance,
         stat_specs=stat_specs,
+        annotation_specs=annotation_specs,
     )
     return Response(
-        response_data_for_one(response_instance, response_mapper, stat_specs),
+        response_data_for_one(
+            response_instance,
+            response_mapper,
+            stat_specs,
+            annotation_specs,
+        ),
         status=status.HTTP_201_CREATED,
     )
 
@@ -872,24 +903,34 @@ def update_response(
     instance: M,
     response_mapper: ResponseMapper[M, ResponseDTO],
     stat_specs: tuple[AggregateStatSpec, ...],
+    annotation_specs: tuple[AnnotationSpec, ...],
 ) -> Response:
     """Return a DTO-shaped 200 response after an update hook succeeds."""
     response_instance = response_instance_with_stats(
         viewset=viewset,
         instance=instance,
         stat_specs=stat_specs,
+        annotation_specs=annotation_specs,
     )
-    return Response(response_data_for_one(response_instance, response_mapper, stat_specs))
+    return Response(
+        response_data_for_one(
+            response_instance,
+            response_mapper,
+            stat_specs,
+            annotation_specs,
+        )
+    )
 
 
 def response_data_for_many(
     instances: Any,
     response_mapper: ResponseMapper[M, ResponseDTO],
     stat_specs: tuple[AggregateStatSpec, ...],
+    annotation_specs: tuple[AnnotationSpec, ...],
 ) -> list[dict[str, Any]]:
     """Map every model instance in an iterable/queryset into response data."""
     return [
-        response_data_for_one(instance, response_mapper, stat_specs)
+        response_data_for_one(instance, response_mapper, stat_specs, annotation_specs)
         for instance in instances
     ]
 
@@ -898,9 +939,15 @@ def response_data_for_one(
     instance: M,
     response_mapper: ResponseMapper[M, ResponseDTO],
     stat_specs: tuple[AggregateStatSpec, ...],
+    annotation_specs: tuple[AnnotationSpec, ...],
 ) -> dict[str, Any]:
     """Map one model instance into JSON-ready response data."""
-    return map_instance_to_response_data(instance, response_mapper, stat_specs)
+    return map_instance_to_response_data(
+        instance,
+        response_mapper,
+        stat_specs,
+        annotation_specs,
+    )
 
 
 def response_instance_with_stats(
@@ -908,12 +955,18 @@ def response_instance_with_stats(
     viewset: ModelViewSet,
     instance: M,
     stat_specs: tuple[AggregateStatSpec, ...],
+    annotation_specs: tuple[AnnotationSpec, ...],
 ) -> M:
     """Reload write-hook results so create/update responses include fresh stats."""
-    return instance_with_stat_annotations(
+    response_instance = instance_with_stat_annotations(
         instance=instance,
         queryset=viewset.get_queryset(),
         stat_specs=stat_specs,
+    )
+    return instance_with_annotation_specs(
+        instance=response_instance,
+        queryset=viewset.get_queryset(),
+        annotation_specs=annotation_specs,
     )
 
 
