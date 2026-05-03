@@ -68,6 +68,7 @@ from crudfactory import (
     source_filterable,
     source_orderable,
     sum_stat,
+    latest_related_value,
 )
 from crudfactory.acl_tables import ensure_acl_tables_exist
 from crudfactory.config import get_crudfactory_settings
@@ -106,6 +107,22 @@ class NestedWidgetChild(models.Model):
     )
     name = models.CharField(max_length=50)
     status = models.CharField(max_length=20)
+
+    class Meta:
+        app_label = "tests"
+
+    if TYPE_CHECKING:
+        id: int
+
+
+class WidgetReading(models.Model):
+    widget = models.ForeignKey(
+        Widget,
+        on_delete=models.CASCADE,
+        related_name="readings",
+    )
+    value = models.IntegerField(default=0)
+    label = models.CharField(max_length=50, default="")
 
     class Meta:
         app_label = "tests"
@@ -449,6 +466,62 @@ class WidgetAnnotatedResponseDTO:
 
 
 @dataclass
+class WidgetLatestReadingDTO:
+    value: int | None = field(
+        default=None,
+        metadata=latest_related_value(
+            model=WidgetReading,
+            fk_field="widget",
+            value_field="value",
+            order_by="-id",
+            default=None,
+        ),
+    )
+    label: str | None = field(
+        default=None,
+        metadata=latest_related_value(
+            model=WidgetReading,
+            fk_field="widget",
+            value_field="label",
+            order_by="-id",
+            default=None,
+        ),
+    )
+
+
+@dataclass
+class WidgetLatestResponseDTO:
+    id: int
+    name: str
+    latest_value: int | None = field(
+        default=None,
+        metadata=latest_related_value(
+            model=WidgetReading,
+            fk_field="widget",
+            value_field="value",
+            order_by="-id",
+            default=None,
+        ),
+    )
+    latest_reading: WidgetLatestReadingDTO = field(
+        default_factory=WidgetLatestReadingDTO
+    )
+
+
+@dataclass
+class InvalidWidgetLatestResponseDTO:
+    id: int
+    latest_value: int | None = field(
+        default=None,
+        metadata=latest_related_value(
+            value_field="value",
+            order_by="-id",
+            default=None,
+        ),
+    )
+
+
+@dataclass
 class InvalidWidgetAnnotationResponseDTO:
     id: int
     bad_value: int = field(
@@ -670,6 +743,7 @@ class CRUDFactoryTests(unittest.TestCase):
         super().setUpClass()
         with connection.schema_editor() as schema_editor:
             schema_editor.create_model(Widget)
+            schema_editor.create_model(WidgetReading)
             schema_editor.create_model(NestedWidget)
             schema_editor.create_model(NestedWidgetChild)
 
@@ -678,10 +752,12 @@ class CRUDFactoryTests(unittest.TestCase):
         with connection.schema_editor() as schema_editor:
             schema_editor.delete_model(NestedWidgetChild)
             schema_editor.delete_model(NestedWidget)
+            schema_editor.delete_model(WidgetReading)
             schema_editor.delete_model(Widget)
         super().tearDownClass()
 
     def setUp(self) -> None:
+        WidgetReading.objects.all().delete()
         Widget.objects.all().delete()
         NestedWidgetChild.objects.all().delete()
         NestedWidget.objects.all().delete()
@@ -715,6 +791,16 @@ class CRUDFactoryTests(unittest.TestCase):
         config = {
             "model": Widget,
             "response_dataclass": WidgetAnnotatedResponseDTO,
+            "queryset": Widget.objects.order_by("id"),
+            "read_only": True,
+        }
+        config.update(overrides)
+        return CRUDFactory(**config)
+
+    def build_latest_factory(self, **overrides: object) -> CRUDFactory:
+        config = {
+            "model": Widget,
+            "response_dataclass": WidgetLatestResponseDTO,
             "queryset": Widget.objects.order_by("id"),
             "read_only": True,
         }
@@ -1123,6 +1209,77 @@ class CRUDFactoryTests(unittest.TestCase):
             self.build_annotation_factory(
                 response_dataclass=InvalidWidgetAnnotationResponseDTO,
             )
+
+    def test_latest_related_value_requires_relation_or_model_configuration(self) -> None:
+        with self.assertRaisesRegex(TypeError, "requires either relation=... or both model=..."):
+            self.build_latest_factory(
+                response_dataclass=InvalidWidgetLatestResponseDTO,
+            )
+
+    def test_latest_related_value_appears_in_list_and_detail_responses(self) -> None:
+        first = Widget.objects.create(name="alpha", count=2)
+        second = Widget.objects.create(name="beta", count=9)
+        WidgetReading.objects.create(widget=first, value=2, label="older")
+        WidgetReading.objects.create(widget=first, value=7, label="newer")
+        WidgetReading.objects.create(widget=second, value=11, label="latest")
+        viewset_class = self.build_latest_factory().get_viewset_class()
+
+        list_response = viewset_class.as_view({"get": "list"})(
+            self.request_factory.get("/widgets/")
+        )
+        detail_response = viewset_class.as_view({"get": "retrieve"})(
+            self.request_factory.get(f"/widgets/{first.pk}/"),
+            pk=first.pk,
+        )
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(
+            list_response.data,
+            [
+                {
+                    "id": ANY,
+                    "name": "alpha",
+                    "latest_value": 7,
+                    "latest_reading": {"value": 7, "label": "newer"},
+                },
+                {
+                    "id": ANY,
+                    "name": "beta",
+                    "latest_value": 11,
+                    "latest_reading": {"value": 11, "label": "latest"},
+                },
+            ],
+        )
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(
+            detail_response.data,
+            {
+                "id": first.pk,
+                "name": "alpha",
+                "latest_value": 7,
+                "latest_reading": {"value": 7, "label": "newer"},
+            },
+        )
+
+    def test_latest_related_value_uses_null_when_no_child_rows_exist(self) -> None:
+        widget = Widget.objects.create(name="alpha", count=2)
+        viewset_class = self.build_latest_factory().get_viewset_class()
+
+        response = viewset_class.as_view({"get": "retrieve"})(
+            self.request_factory.get(f"/widgets/{widget.pk}/"),
+            pk=widget.pk,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data,
+            {
+                "id": widget.pk,
+                "name": "alpha",
+                "latest_value": None,
+                "latest_reading": {"value": None, "label": None},
+            },
+        )
 
     def test_factory_can_render_markdown_contract_docs(self) -> None:
         markdown = self.build_factory(route="widgets", basename="widget").render_markdown_docs(

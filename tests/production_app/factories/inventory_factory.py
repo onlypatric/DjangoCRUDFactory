@@ -11,6 +11,7 @@ from crudfactory import (
     annotated_field,
     collection_action,
     filterable,
+    latest_related_value,
     model_field,
     orderable,
 )
@@ -33,15 +34,19 @@ class InventoryItemResponseDTO:
     )
     quantity: int = field(metadata=orderable())
     latest_state: str | None = field(
-        metadata=annotated_field(
-            annotation=Subquery(LATEST_STATUS_READING.values("state")[:1]),
+        metadata=latest_related_value(
+            relation="status_readings",
             default=None,
+            order_by="-id",
+            value_field="state",
         )
     )
     latest_duration: int | None = field(
-        metadata=annotated_field(
-            annotation=Subquery(LATEST_STATUS_READING.values("duration")[:1]),
+        metadata=latest_related_value(
+            relation="status_readings",
             default=None,
+            order_by="-id",
+            value_field="duration",
         )
     )
     has_stock_level: bool = field(

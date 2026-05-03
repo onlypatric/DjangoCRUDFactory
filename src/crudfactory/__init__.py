@@ -20,7 +20,7 @@ from .bulk_actions import (
     bulk_patch_action,
     bulk_update_action,
 )
-from .annotations import annotated_field
+from .annotations import annotated_field, latest_related_value
 from .factory import CRUDFactory
 from .field_subresources import FieldSubresourceSpec, field_subresource
 from ._nested_writes import NestedWriteSpec, nested_relation
@@ -60,6 +60,7 @@ __all__ = [
     "NestedWriteSpec",
     "avg_stat",
     "annotated_field",
+    "latest_related_value",
     "bulk_create_action",
     "bulk_delete_action",
     "bulk_patch_action",

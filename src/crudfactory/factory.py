@@ -182,6 +182,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             self.response_mapper
         )
         self.annotation_specs = annotation_specs_from_response_mapper(
+            self.model,
             self.response_mapper
         )
 

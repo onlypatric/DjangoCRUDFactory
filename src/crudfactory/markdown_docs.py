@@ -12,7 +12,11 @@ from ._simple_writes import (
     MODEL_READ_TRANSFORM_METADATA_KEY,
     MODEL_WRITE_TRANSFORM_METADATA_KEY,
 )
-from .annotations import ANNOTATION_METADATA_KEY, AnnotationDeclaration
+from .annotations import (
+    ANNOTATION_METADATA_KEY,
+    AnnotationDeclaration,
+    LatestRelatedDeclaration,
+)
 from .filters import FILTER_METADATA_KEY, FilterDeclaration
 from .field_subresources import field_subresource_payload_label
 from .ordering import ORDERING_QUERY_PARAM, ORDER_METADATA_KEY
@@ -491,6 +495,16 @@ def field_metadata_lines(dataclass_field: Field[Any]) -> list[str]:
             if declaration.alias is not None:
                 annotation_bits.append(f"logical alias `{declaration.alias}`")
             lines.append("Annotation: " + ", ".join(annotation_bits))
+        elif isinstance(declaration, LatestRelatedDeclaration):
+            latest_bits = [f"value field `{declaration.value_field}`"]
+            if declaration.relation is not None:
+                latest_bits.append(f"relation `{declaration.relation}`")
+            if declaration.model is not None:
+                latest_bits.append(f"model `{declaration.model.__name__}`")
+            latest_bits.append(
+                "order_by " + ", ".join(f"`{item}`" for item in declaration.order_by)
+            )
+            lines.append("Latest related value: " + ", ".join(latest_bits))
     if REGEX_METADATA_KEY in metadata:
         lines.append(f"Regex: `{metadata[REGEX_METADATA_KEY]}`")
     if MIN_VALUE_METADATA_KEY in metadata or MAX_VALUE_METADATA_KEY in metadata:
