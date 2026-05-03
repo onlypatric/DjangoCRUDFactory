@@ -30,6 +30,10 @@ __all__ = [
     "ACLMode",
     "ListFilterMode",
     "crud_acl",
+    "global_read_acl",
+    "global_read_write_acl",
+    "scoped_read_acl",
+    "scoped_read_write_acl",
 ]
 
 
@@ -162,6 +166,164 @@ def crud_acl(
         resource_ref_from_update_input=resource_ref_from_update_input,
         resource_ref_from_patch_input=resource_ref_from_patch_input,
         queryset_filter=queryset_filter,
+    )
+
+
+def scoped_read_acl(
+    *,
+    backend: ACLBackend,
+    permission: str,
+    unauthorized_as_404: bool = True,
+    list_filter_mode: ListFilterMode = "filter",
+    actor_resolver: ActorResolver = default_actor_resolver,
+    resource_ref_from_instance: InstanceRefResolver[M],
+    queryset_filter: QuerysetFilter[M] | None = None,
+) -> ACLConfig[M, object, object, object]:
+    """Return a scoped read-only ACLConfig for common list/retrieve endpoints."""
+    read_action = ACLActionConfig(
+        permission=permission,
+        mode="scoped",
+        unauthorized_as_404=unauthorized_as_404,
+    )
+    return ACLConfig(
+        backend=backend,
+        list_action=read_action,
+        retrieve_action=read_action,
+        list_filter_mode=list_filter_mode,
+        actor_resolver=actor_resolver,
+        resource_ref_from_instance=resource_ref_from_instance,
+        queryset_filter=queryset_filter,
+    )
+
+
+def scoped_read_write_acl(
+    *,
+    backend: ACLBackend,
+    read_permission: str,
+    create_permission: str,
+    update_permission: str,
+    delete_permission: str,
+    unauthorized_as_404: bool = True,
+    list_filter_mode: ListFilterMode = "filter",
+    actor_resolver: ActorResolver = default_actor_resolver,
+    resource_ref_from_instance: InstanceRefResolver[M],
+    resource_ref_from_create_input: CreateRefResolver[CreateDTO] | None = None,
+    resource_ref_from_update_input: UpdateRefResolver[M, UpdateDTO] | None = None,
+    resource_ref_from_patch_input: PatchRefResolver[M, PatchDTO] | None = None,
+    queryset_filter: QuerysetFilter[M] | None = None,
+) -> ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO]:
+    """Return a scoped full-CRUD ACLConfig with explicit per-action permissions."""
+    return ACLConfig(
+        backend=backend,
+        list_action=ACLActionConfig(
+            permission=read_permission,
+            mode="scoped",
+            unauthorized_as_404=unauthorized_as_404,
+        ),
+        retrieve_action=ACLActionConfig(
+            permission=read_permission,
+            mode="scoped",
+            unauthorized_as_404=unauthorized_as_404,
+        ),
+        create_action=ACLActionConfig(
+            permission=create_permission,
+            mode="scoped",
+            unauthorized_as_404=unauthorized_as_404,
+        ),
+        update_action=ACLActionConfig(
+            permission=update_permission,
+            mode="scoped",
+            unauthorized_as_404=unauthorized_as_404,
+        ),
+        partial_update_action=ACLActionConfig(
+            permission=update_permission,
+            mode="scoped",
+            unauthorized_as_404=unauthorized_as_404,
+        ),
+        destroy_action=ACLActionConfig(
+            permission=delete_permission,
+            mode="scoped",
+            unauthorized_as_404=unauthorized_as_404,
+        ),
+        list_filter_mode=list_filter_mode,
+        actor_resolver=actor_resolver,
+        resource_ref_from_instance=resource_ref_from_instance,
+        resource_ref_from_create_input=resource_ref_from_create_input,
+        resource_ref_from_update_input=resource_ref_from_update_input,
+        resource_ref_from_patch_input=resource_ref_from_patch_input,
+        queryset_filter=queryset_filter,
+    )
+
+
+def global_read_acl(
+    *,
+    backend: ACLBackend,
+    permission: str,
+    unauthorized_as_404: bool = True,
+    list_filter_mode: ListFilterMode = "filter",
+    actor_resolver: ActorResolver = default_actor_resolver,
+) -> ACLConfig[models.Model, object, object, object]:
+    """Return a global read-only ACLConfig for common list/retrieve endpoints."""
+    read_action = ACLActionConfig(
+        permission=permission,
+        mode="global",
+        unauthorized_as_404=unauthorized_as_404,
+    )
+    return ACLConfig(
+        backend=backend,
+        list_action=read_action,
+        retrieve_action=read_action,
+        list_filter_mode=list_filter_mode,
+        actor_resolver=actor_resolver,
+    )
+
+
+def global_read_write_acl(
+    *,
+    backend: ACLBackend,
+    read_permission: str,
+    create_permission: str,
+    update_permission: str,
+    delete_permission: str,
+    unauthorized_as_404: bool = True,
+    list_filter_mode: ListFilterMode = "filter",
+    actor_resolver: ActorResolver = default_actor_resolver,
+) -> ACLConfig[models.Model, object, object, object]:
+    """Return a global full-CRUD ACLConfig with explicit per-action permissions."""
+    return ACLConfig(
+        backend=backend,
+        list_action=ACLActionConfig(
+            permission=read_permission,
+            mode="global",
+            unauthorized_as_404=unauthorized_as_404,
+        ),
+        retrieve_action=ACLActionConfig(
+            permission=read_permission,
+            mode="global",
+            unauthorized_as_404=unauthorized_as_404,
+        ),
+        create_action=ACLActionConfig(
+            permission=create_permission,
+            mode="global",
+            unauthorized_as_404=unauthorized_as_404,
+        ),
+        update_action=ACLActionConfig(
+            permission=update_permission,
+            mode="global",
+            unauthorized_as_404=unauthorized_as_404,
+        ),
+        partial_update_action=ACLActionConfig(
+            permission=update_permission,
+            mode="global",
+            unauthorized_as_404=unauthorized_as_404,
+        ),
+        destroy_action=ACLActionConfig(
+            permission=delete_permission,
+            mode="global",
+            unauthorized_as_404=unauthorized_as_404,
+        ),
+        list_filter_mode=list_filter_mode,
+        actor_resolver=actor_resolver,
     )
 
 

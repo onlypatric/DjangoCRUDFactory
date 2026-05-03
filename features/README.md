@@ -10,8 +10,8 @@ non-auth flows.
 ## Progress Summary
 
 - Total tracked feature requests: `15`
-- Implemented so far: `10`
-- Still planned: `5`
+- Implemented so far: `11`
+- Still planned: `4`
 
 Implemented so far:
 
@@ -25,6 +25,7 @@ Implemented so far:
 8. nested subresource endpoints
 9. declarative filtered related collections and prefetch specs
 10. enum histogram and grouped stats helpers
+11. built-in ACL presets
 
 ## Status Overview
 
@@ -41,26 +42,23 @@ Implemented so far:
 | Advanced query DTOs for normal list endpoints | `2026-04-30-advanced-query-dtos.md` | `planned` | Richer collection querying without custom views. |
 | Declarative filtered related collections / prefetch specs | `2026-04-30-filtered-related-collections.md` | `implemented` | `related_list(...)` now lets nested response DTO fields declare their own filtered queryset and recursive prefetch plan. |
 | Enum histogram / grouped stats helpers | `2026-04-30-enum-histogram-stats.md` | `implemented` | `enum_summary(...)` now generates count-stat response blocks from enum values while staying inside the normal stats pipeline. |
-| Built-in scoped ACL presets | `2026-04-30-built-in-acl-presets.md` | `planned` | Cuts repetitive ACL helper glue. |
+| Built-in scoped ACL presets | `2026-04-30-built-in-acl-presets.md` | `implemented` | `scoped_read_acl(...)`, `scoped_read_write_acl(...)`, `global_read_acl(...)`, and `global_read_write_acl(...)` now cover the common permission shapes without hand-built `ACLConfig(...)` blocks. |
 | Metadata composition helpers | `2026-04-30-metadata-composition-helpers.md` | `planned` | Improves DTO readability and reduces syntax noise. |
 | Soft delete / restore lifecycles | `2026-04-30-soft-delete-and-restore.md` | `planned` | Common product lifecycle requirement. |
 | Queryset plans from response contracts | `2026-04-30-queryset-plans-from-response-contracts.md` | `planned` | Ergonomics and N+1 safety improvement. |
 
 ## Recommended Order
 
-1. `2026-04-30-built-in-acl-presets.md`
-    Reason: good readability improvement once the bigger behavioral features are
-    in place.
-2. `2026-04-30-advanced-query-dtos.md`
+1. `2026-04-30-advanced-query-dtos.md`
     Reason: once CRUD and computed reads are covered, richer query forms become
     the next pressure point.
-3. `2026-04-30-soft-delete-and-restore.md`
+2. `2026-04-30-soft-delete-and-restore.md`
     Reason: important product requirement, but less foundational than nested
     writes and computed read support.
-4. `2026-04-30-queryset-plans-from-response-contracts.md`
+3. `2026-04-30-queryset-plans-from-response-contracts.md`
     Reason: improves ergonomics and performance, but is safer after more of the
     response-side abstractions are settled.
-5. `2026-04-30-metadata-composition-helpers.md`
+4. `2026-04-30-metadata-composition-helpers.md`
     Reason: useful DX cleanup, but not a capability blocker.
 
 ## Relationship Notes

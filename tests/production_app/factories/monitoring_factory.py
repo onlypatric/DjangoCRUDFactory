@@ -6,8 +6,6 @@ from typing import Sequence, cast
 from django.db import models
 
 from crudfactory import (
-    ACLActionConfig,
-    ACLConfig,
     ACLResourceRef,
     CRUDFactory,
     DjangoACLBackend,
@@ -16,6 +14,7 @@ from crudfactory import (
     grouped_collection_action,
     model_field,
     orderable,
+    scoped_read_acl,
     source_filterable,
     source_orderable,
 )
@@ -167,13 +166,9 @@ monitoring_item_factory = CRUDFactory.read_only(
             ),
         ),
     ),
-    acl=cast(
-        ACLConfig[MonitoringItem, object, object, object],
-        ACLConfig(
-            backend=DjangoACLBackend(),
-            list_action=ACLActionConfig(permission="app.monitoring.items.read"),
-            retrieve_action=ACLActionConfig(permission="app.monitoring.items.read"),
-            resource_ref_from_instance=monitoring_item_resource_ref,
-        ),
+    acl=scoped_read_acl(
+        backend=DjangoACLBackend(),
+        permission="app.monitoring.items.read",
+        resource_ref_from_instance=monitoring_item_resource_ref,
     ),
 )

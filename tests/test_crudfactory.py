@@ -43,8 +43,8 @@ django.setup()
 
 from crudfactory import (
     ACLActionConfig,
-    ACLConfig,
     ACLBackend,
+    ACLConfig,
     CRUDFactory,
     GroupedCollectionSourceACL,
     avg_stat,
@@ -59,7 +59,10 @@ from crudfactory import (
     enum_summary,
     field_subresource,
     filterable,
+    global_read_acl,
+    global_read_write_acl,
     length,
+    latest_related_value,
     max_stat,
     min_stat,
     model_field,
@@ -69,10 +72,11 @@ from crudfactory import (
     range_,
     regex,
     related_list,
+    scoped_read_acl,
+    scoped_read_write_acl,
     source_filterable,
     source_orderable,
     sum_stat,
-    latest_related_value,
 )
 from crudfactory.acl_tables import ensure_acl_tables_exist
 from crudfactory.config import get_crudfactory_settings
@@ -187,6 +191,104 @@ class ACLTableCreationTests(SimpleTestCase):
         self.assertIn("app_acl_resource_closure", created_model_tables)
         self.assertIn("app_acl_grant", created_model_tables)
         self.assertIn("app_acl_audit_log", created_model_tables)
+
+
+class ACLPresetTests(SimpleTestCase):
+    def test_scoped_read_acl_enables_only_read_actions(self) -> None:
+        acl = scoped_read_acl(
+            backend=FakeACLBackend(),
+            permission="app.widgets.read",
+            resource_ref_from_instance=lambda widget: cast(Widget, widget).name,
+        )
+
+        self.assertEqual(acl.list_action, ACLActionConfig(permission="app.widgets.read"))
+        self.assertEqual(acl.retrieve_action, ACLActionConfig(permission="app.widgets.read"))
+        self.assertIsNone(acl.create_action)
+        self.assertIsNone(acl.update_action)
+        self.assertIsNone(acl.partial_update_action)
+        self.assertIsNone(acl.destroy_action)
+        self.assertIsNotNone(acl.resource_ref_from_instance)
+
+    def test_scoped_read_write_acl_enables_full_crud_actions(self) -> None:
+        acl = scoped_read_write_acl(
+            backend=FakeACLBackend(),
+            read_permission="app.widgets.read",
+            create_permission="app.widgets.create",
+            update_permission="app.widgets.update",
+            delete_permission="app.widgets.delete",
+            resource_ref_from_instance=lambda widget: cast(Widget, widget).name,
+            resource_ref_from_create_input=lambda dto: cast(WidgetCreateDTO, dto).name,
+            resource_ref_from_update_input=lambda widget, dto: cast(
+                WidgetUpdateDTO, dto
+            ).name,
+            resource_ref_from_patch_input=lambda widget, dto: (
+                cast(WidgetPatchDTO, dto).name or cast(Widget, widget).name
+            ),
+        )
+
+        self.assertEqual(acl.list_action, ACLActionConfig(permission="app.widgets.read"))
+        self.assertEqual(acl.retrieve_action, ACLActionConfig(permission="app.widgets.read"))
+        self.assertEqual(
+            acl.create_action,
+            ACLActionConfig(permission="app.widgets.create"),
+        )
+        self.assertEqual(
+            acl.update_action,
+            ACLActionConfig(permission="app.widgets.update"),
+        )
+        self.assertEqual(
+            acl.partial_update_action,
+            ACLActionConfig(permission="app.widgets.update"),
+        )
+        self.assertEqual(
+            acl.destroy_action,
+            ACLActionConfig(permission="app.widgets.delete"),
+        )
+        self.assertIsNotNone(acl.resource_ref_from_create_input)
+        self.assertIsNotNone(acl.resource_ref_from_update_input)
+        self.assertIsNotNone(acl.resource_ref_from_patch_input)
+
+    def test_global_read_acl_sets_global_mode(self) -> None:
+        acl = global_read_acl(
+            backend=FakeACLBackend(),
+            permission="app.widgets.read",
+        )
+
+        self.assertEqual(
+            acl.list_action,
+            ACLActionConfig(permission="app.widgets.read", mode="global"),
+        )
+        self.assertEqual(
+            acl.retrieve_action,
+            ACLActionConfig(permission="app.widgets.read", mode="global"),
+        )
+        self.assertIsNone(acl.resource_ref_from_instance)
+
+    def test_global_read_write_acl_enables_full_crud_actions(self) -> None:
+        acl = global_read_write_acl(
+            backend=FakeACLBackend(),
+            read_permission="app.widgets.read",
+            create_permission="app.widgets.create",
+            update_permission="app.widgets.update",
+            delete_permission="app.widgets.delete",
+        )
+
+        self.assertEqual(
+            acl.create_action,
+            ACLActionConfig(permission="app.widgets.create", mode="global"),
+        )
+        self.assertEqual(
+            acl.update_action,
+            ACLActionConfig(permission="app.widgets.update", mode="global"),
+        )
+        self.assertEqual(
+            acl.partial_update_action,
+            ACLActionConfig(permission="app.widgets.update", mode="global"),
+        )
+        self.assertEqual(
+            acl.destroy_action,
+            ACLActionConfig(permission="app.widgets.delete", mode="global"),
+        )
 
 
 @dataclass

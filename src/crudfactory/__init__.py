@@ -3,7 +3,16 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
-from .acl import ACLActionConfig, ACLBackend, ACLConfig, crud_acl
+from .acl import (
+    ACLActionConfig,
+    ACLBackend,
+    ACLConfig,
+    crud_acl,
+    global_read_acl,
+    global_read_write_acl,
+    scoped_read_acl,
+    scoped_read_write_acl,
+)
 from .actions import (
     GroupedCollectionSourceACL,
     collection_action,
@@ -79,6 +88,8 @@ __all__ = [
     "enum_summary",
     "filterable",
     "field_subresource",
+    "global_read_acl",
+    "global_read_write_acl",
     "grouped_collection_action",
     "length",
     "max_stat",
@@ -91,6 +102,8 @@ __all__ = [
     "range_",
     "regex",
     "related_list",
+    "scoped_read_acl",
+    "scoped_read_write_acl",
     "source_filterable",
     "source_orderable",
     "sum_stat",
