@@ -24,6 +24,14 @@ from .field_subresources import (
     FieldSubresourceSpec,
     normalize_field_subresources,
 )
+from .list_queries import (
+    ListQueryFilterSpec,
+    ListQueryOrderingSpec,
+    ListQuerySearchSpec,
+    list_query_filter_specs_from_dataclass,
+    list_query_ordering_specs_from_dataclass,
+    list_query_search_specs_from_dataclass,
+)
 from .ordering import OrderSpec, order_specs_from_response_mapper
 from .markdown_docs import render_factory_markdown
 from ._nested_writes import (
@@ -90,6 +98,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         create_input: type[CreateDTO] | None = None,
         update_input: type[UpdateDTO] | None = None,
         partial_update_input: type[PatchDTO] | None = None,
+        list_query: type[object] | None = None,
         create_handler: CreateHandler[CreateDTO, M] | None = None,
         update_handler: UpdateHandler[M, UpdateDTO] | None = None,
         partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None = None,
@@ -117,6 +126,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         self.create_input = create_input
         self.update_input = update_input
         self.partial_update_input = partial_update_input
+        self.list_query = list_query
         self.response_mapper: ResponseMapper[M, ResponseDTO] = resolve_response_mapper(
             model=model,
             response_mapper=response_mapper,
@@ -191,6 +201,21 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         self.order_specs: tuple[OrderSpec, ...] = order_specs_from_response_mapper(
             self.response_mapper
         )
+        self.list_query_filter_specs: tuple[ListQueryFilterSpec, ...] = (
+            list_query_filter_specs_from_dataclass(list_query)
+            if list_query is not None
+            else ()
+        )
+        self.list_query_search_specs: tuple[ListQuerySearchSpec, ...] = (
+            list_query_search_specs_from_dataclass(list_query)
+            if list_query is not None
+            else ()
+        )
+        self.list_query_ordering_specs: tuple[ListQueryOrderingSpec, ...] = (
+            list_query_ordering_specs_from_dataclass(list_query)
+            if list_query is not None
+            else ()
+        )
         self.stat_specs: tuple[AggregateStatSpec, ...] = stat_specs_from_response_mapper(
             self.response_mapper
         )
@@ -209,6 +234,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             create_input=self.create_input,
             update_input=self.update_input,
             partial_update_input=self.partial_update_input,
+            list_query=self.list_query,
             create_handler=self.create_handler,
             update_handler=self.update_handler,
             partial_update_handler=self.partial_update_handler,
@@ -252,6 +278,10 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             related_prefetches=self.related_prefetches,
             filter_specs=self.filter_specs,
             order_specs=self.order_specs,
+            list_query=self.list_query,
+            list_query_filter_specs=self.list_query_filter_specs,
+            list_query_search_specs=self.list_query_search_specs,
+            list_query_ordering_specs=self.list_query_ordering_specs,
             stat_specs=self.stat_specs,
             annotation_specs=self.annotation_specs,
         )
@@ -278,6 +308,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         field_subresources: Sequence[FieldSubresourceSpec] | None = None,
         acl: ACLConfig[M, object, object, object] | None = None,
         parent_scope: ParentScopeSpec | None = None,
+        list_query: type[object] | None = None,
     ) -> CRUDFactory[M, object, object, object, ResponseDTO]:
         """Return a factory that exposes only list and retrieve endpoints."""
         return CRUDFactory(
@@ -300,6 +331,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             field_subresources=field_subresources,
             acl=acl,
             parent_scope=parent_scope,
+            list_query=list_query,
         )
 
     def get_router(

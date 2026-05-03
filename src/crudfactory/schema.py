@@ -22,11 +22,7 @@ from .dataclass_serializers import (
 from .field_subresources import FieldSubresourceSpec, direct_model_field
 from .filters import FilterSpec
 from .ordering import ORDERING_QUERY_PARAM, OrderSpec
-from .source_queries import (
-    query_param_names_from_dataclass,
-    source_filter_specs_from_dataclass,
-    source_order_specs_from_dataclass,
-)
+from .source_queries import source_filter_specs_from_dataclass, source_order_specs_from_dataclass
 
 __all__: list[str] = []
 
@@ -190,6 +186,7 @@ def apply_schema_metadata(
     read_only: bool,
     filter_specs: tuple[FilterSpec, ...],
     order_specs: tuple[OrderSpec, ...],
+    list_query: type[object] | None = None,
     custom_actions: tuple[CustomActionSpec[Any], ...] = (),
     custom_action_serializers: dict[str, type[serializers.Serializer]] | None = None,
     custom_action_response_serializers: dict[str, type[serializers.Serializer]] | None = None,
@@ -223,6 +220,7 @@ def apply_schema_metadata(
         read_only=read_only,
         filter_specs=filter_specs,
         order_specs=order_specs,
+        list_query=list_query,
         custom_actions=custom_actions,
         custom_action_serializers=custom_action_serializers or {},
         custom_action_response_serializers=custom_action_response_serializers or {},
@@ -264,6 +262,7 @@ def apply_drf_spectacular_metadata(
     read_only: bool,
     filter_specs: tuple[FilterSpec, ...],
     order_specs: tuple[OrderSpec, ...],
+    list_query: type[object] | None,
     custom_actions: tuple[CustomActionSpec[Any], ...],
     custom_action_serializers: dict[str, type[serializers.Serializer]],
     custom_action_response_serializers: dict[str, type[serializers.Serializer]],
@@ -289,6 +288,7 @@ def apply_drf_spectacular_metadata(
     list_parameters = list_parameters_for_schema(
         filter_specs=filter_specs,
         order_specs=order_specs,
+        list_query=list_query,
         OpenApiParameter=OpenApiParameter,
     )
     viewset_class.list = extend_schema(
@@ -491,6 +491,7 @@ def list_parameters_for_schema(
     *,
     filter_specs: tuple[FilterSpec, ...],
     order_specs: tuple[OrderSpec, ...],
+    list_query: type[object] | None = None,
     OpenApiParameter: type[Any],
 ) -> list[Any]:
     """Return OpenAPI query parameters for generated list filters/orderings."""
@@ -518,6 +519,18 @@ def list_parameters_for_schema(
                 ),
             )
         )
+    if list_query is None:
+        return parameters
+    seen_names = {parameter.name for parameter in parameters}
+    for parameter in dataclass_query_parameters_for_schema(
+        list_query,
+        OpenApiParameter=OpenApiParameter,
+        label="List query field",
+    ):
+        if parameter.name in seen_names:
+            continue
+        seen_names.add(parameter.name)
+        parameters.append(parameter)
     return parameters
 
 
@@ -551,16 +564,14 @@ def dataclass_query_parameters_for_schema(
     dataclass_type: type[Any],
     *,
     OpenApiParameter: type[Any],
+    label: str = "Grouped action query field",
 ) -> list[Any]:
     """Return OpenAPI query parameters for exact-name grouped query DTO fields."""
     ensure_dataclass_type("grouped action query dataclass", dataclass_type)
     serializer_fields = build_serializer_fields(dataclass_type)
-    query_param_names = query_param_names_from_dataclass(dataclass_type)
     type_hints = get_type_hints(dataclass_type)
     parameters: list[Any] = []
     for dataclass_field in fields(dataclass_type):
-        if dataclass_field.name not in query_param_names:
-            continue
         serializer_field = serializer_fields[dataclass_field.name]
         field_type = type_hints.get(dataclass_field.name, dataclass_field.type)
         parameters.append(
@@ -570,7 +581,7 @@ def dataclass_query_parameters_for_schema(
                 location=OpenApiParameter.QUERY,
                 required=is_required_dataclass_field(dataclass_field),
                 description=(
-                    f"Grouped action query field `{dataclass_field.name}`."
+                    f"{label} `{dataclass_field.name}`."
                     if not serializer_field.help_text
                     else str(serializer_field.help_text)
                 ),

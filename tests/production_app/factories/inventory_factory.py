@@ -14,6 +14,10 @@ from crudfactory import (
     latest_related_value,
     model_field,
     orderable,
+    query_exclude,
+    query_ordering,
+    query_range,
+    query_search,
 )
 
 from ..models import InventoryItem, StatusReading, StockLevel
@@ -54,6 +58,30 @@ class InventoryItemResponseDTO:
             annotation=Exists(StockLevel.objects.filter(item=OuterRef("pk"))),
             default=False,
         )
+    )
+
+
+@dataclass(frozen=True)
+class InventoryItemListQueryDTO:
+    search: str | None = field(
+        default=None,
+        metadata=query_search("name", "internal_code", "supplier__name"),
+    )
+    min_quantity: int | None = field(
+        default=None,
+        metadata=query_range("quantity", op="gte"),
+    )
+    max_quantity: int | None = field(
+        default=None,
+        metadata=query_range("quantity", op="lte"),
+    )
+    exclude_name: str | None = field(
+        default=None,
+        metadata=query_exclude("name", op="icontains"),
+    )
+    sort: str | None = field(
+        default=None,
+        metadata=query_ordering("name", "quantity", latest_state="latest_state"),
     )
 
 
@@ -113,6 +141,7 @@ inventory_item_factory = CRUDFactory.read_only(
     model=InventoryItem,
     response_dataclass=InventoryItemResponseDTO,
     queryset=INVENTORY_ITEM_QUERYSET,
+    list_query=InventoryItemListQueryDTO,
     app_name="inventory",
     route="inventory-items",
     basename="inventory-item",

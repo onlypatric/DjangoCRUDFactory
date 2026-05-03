@@ -32,6 +32,7 @@ from .models import (
     MonitoringStation,
     StatusReading,
     StockLevel,
+    Supplier,
 )
 
 
@@ -764,6 +765,45 @@ class EVInfrastructureCRUDIntegrationTests(TestCase):
             },
         )
 
+    def test_inventory_item_list_query_dto_filters_and_orders_collection_reads(self) -> None:
+        supplier = Supplier.objects.create(name="Northwind")
+        first = self.create_inventory_item(name="Boiler Sensor")
+        first.quantity = 3
+        first.internal_code = "alpha-1"
+        first.supplier = supplier
+        first.save(update_fields=["quantity", "internal_code", "supplier"])
+        second = self.create_inventory_item(name="Boiler Alarm")
+        second.quantity = 8
+        second.internal_code = "alpha-2"
+        second.save(update_fields=["quantity", "internal_code"])
+        third = self.create_inventory_item(name="Pump")
+        third.quantity = 12
+        third.internal_code = "pump-1"
+        third.save(update_fields=["quantity", "internal_code"])
+        StatusReading.objects.create(item=first, state="offline", duration=2)
+        StatusReading.objects.create(item=second, state="online", duration=7)
+        StatusReading.objects.create(item=third, state="faulted", duration=4)
+
+        response = self.client.get(
+            "/api/inventory-items/?search=alpha&min_quantity=2&exclude_name=sensor&sort=-quantity",
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [item["name"] for item in response.data],
+            ["Boiler Alarm"],
+        )
+
+    def test_inventory_item_list_query_invalid_params_return_400(self) -> None:
+        response = self.client.get(
+            "/api/inventory-items/?min_quantity=invalid",
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("min_quantity", response.data)
+
 
 class ConnectorACLIntegrationTests(TestCase):
     client: APIClient
@@ -1219,6 +1259,8 @@ class FactoryDocsServerTests(TestCase):
 
         body = response.content.decode("utf-8")
         self.assertEqual(response.status_code, 200)
+        self.assertIn("### Advanced List Query DTO", body)
+        self.assertIn("InventoryItemListQueryDTO", body)
         self.assertIn("### `search`", body)
         self.assertIn("- Query DTO:", body)
         self.assertIn("InventorySearchQueryDTO", body)

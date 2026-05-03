@@ -19,6 +19,11 @@ from .dataclass_serializers import (
     validate_supported_dataclass_fields,
 )
 from .field_subresources import FieldSubresourceSpec, validate_field_subresources
+from .list_queries import (
+    list_query_filter_specs_from_dataclass,
+    list_query_ordering_specs_from_dataclass,
+    list_query_search_specs_from_dataclass,
+)
 from .parent_scopes import ParentScopeSpec, validate_parent_scope
 from .schema import validate_supported_response_dataclass_fields
 from .source_queries import (
@@ -47,6 +52,7 @@ def validate_factory_configuration(
     create_input: type[CreateDTO] | None,
     update_input: type[UpdateDTO] | None,
     partial_update_input: type[PatchDTO] | None,
+    list_query: type[object] | None,
     create_handler: CreateHandler[CreateDTO, M] | None,
     update_handler: UpdateHandler[M, UpdateDTO] | None,
     partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
@@ -73,6 +79,7 @@ def validate_factory_configuration(
     validate_response_mapper_dataclass(response_mapper)
     validate_custom_actions(custom_actions)
     validate_grouped_actions(grouped_actions)
+    validate_list_query(list_query)
     validate_bulk_actions(
         create_input=create_input,
         update_input=update_input,
@@ -168,6 +175,16 @@ def validate_input_dataclass(name: str, dataclass_type: type[object]) -> None:
     """Validate a request DTO dataclass and every field it declares."""
     ensure_dataclass_type(name, dataclass_type)
     validate_supported_dataclass_fields(dataclass_type)
+
+
+def validate_list_query(list_query: type[object] | None) -> None:
+    """Validate an advanced list query DTO and its metadata declarations."""
+    if list_query is None:
+        return
+    validate_input_dataclass("list_query", list_query)
+    list_query_filter_specs_from_dataclass(list_query)
+    list_query_search_specs_from_dataclass(list_query)
+    list_query_ordering_specs_from_dataclass(list_query)
 
 
 def validate_response_mapper_dataclass(

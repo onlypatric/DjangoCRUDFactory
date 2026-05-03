@@ -47,6 +47,12 @@ from .field_subresources import (
     read_field_payload,
     validated_field_payload,
 )
+from .list_queries import (
+    ListQueryFilterSpec,
+    ListQueryOrderingSpec,
+    ListQuerySearchSpec,
+    apply_list_query_dataclass,
+)
 from ._simple_writes import MODEL_FIELD_METADATA_KEY
 from .inputs import override_dataclass, project_dataclass, serializer_to_dataclass
 from .ordering import OrderSpec, apply_order_specs
@@ -89,6 +95,7 @@ def build_crud_viewset_class(
     create_input: type[CreateDTO] | None,
     update_input: type[UpdateDTO] | None,
     partial_update_input: type[PatchDTO] | None,
+    list_query: type[object] | None,
     create_handler: CreateHandler[CreateDTO, M] | None,
     update_handler: UpdateHandler[M, UpdateDTO] | None,
     partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
@@ -106,6 +113,9 @@ def build_crud_viewset_class(
     pagination_class: type[BasePagination] | None,
     filter_specs: tuple[FilterSpec, ...],
     order_specs: tuple[OrderSpec, ...],
+    list_query_filter_specs: tuple[ListQueryFilterSpec, ...],
+    list_query_search_specs: tuple[ListQuerySearchSpec, ...],
+    list_query_ordering_specs: tuple[ListQueryOrderingSpec, ...],
     stat_specs: tuple[AggregateStatSpec, ...],
     annotation_specs: tuple[AnnotationSpec, ...],
     parent_scope: ParentScopeSpec | None,
@@ -136,6 +146,7 @@ def build_crud_viewset_class(
     grouped_action_response_serializers = build_grouped_action_response_serializers(
         grouped_actions
     )
+    list_query_serializer = build_list_query_serializer(list_query)
     bulk_action_serializers = build_bulk_action_serializers(
         bulk_actions=bulk_actions,
         create_input=create_input,
@@ -161,6 +172,7 @@ def build_crud_viewset_class(
         custom_action_serializers=custom_action_serializers,
         custom_action_response_serializers=custom_action_response_serializers,
         grouped_action_serializers=grouped_action_serializers,
+        list_query_serializer=list_query_serializer,
         bulk_action_serializers=bulk_action_serializers,
         response_serializer=response_serializer,
         field_subresources=field_subresources,
@@ -169,6 +181,10 @@ def build_crud_viewset_class(
         lookup_url_kwarg=lookup_url_kwarg,
         filter_specs=filter_specs,
         order_specs=order_specs,
+        list_query=list_query,
+        list_query_filter_specs=list_query_filter_specs,
+        list_query_search_specs=list_query_search_specs,
+        list_query_ordering_specs=list_query_ordering_specs,
         stat_specs=stat_specs,
         annotation_specs=annotation_specs,
         parent_scope=parent_scope,
@@ -184,6 +200,7 @@ def build_crud_viewset_class(
         read_only=read_only,
         filter_specs=filter_specs,
         order_specs=order_specs,
+        list_query=list_query,
         custom_actions=custom_actions,
         custom_action_serializers=custom_action_serializers,
         custom_action_response_serializers=custom_action_response_serializers,
@@ -216,6 +233,18 @@ def build_response_serializer_for_mapper(
     return build_response_serializer_from_dataclass(
         response_dataclass,
         name=f"{response_dataclass.__name__}Serializer",
+    )
+
+
+def build_list_query_serializer(
+    list_query: type[object] | None,
+) -> type[serializers.Serializer] | None:
+    """Build the serializer used to validate advanced list-query DTOs."""
+    if list_query is None:
+        return None
+    return build_serializer_from_dataclass(
+        list_query,
+        name=f"{list_query.__name__}Serializer",
     )
 
 
@@ -369,6 +398,7 @@ def create_viewset_class(
     custom_action_serializers: dict[str, type[serializers.Serializer]],
     custom_action_response_serializers: dict[str, type[serializers.Serializer]],
     grouped_action_serializers: dict[str, type[serializers.Serializer]],
+    list_query_serializer: type[serializers.Serializer] | None,
     bulk_action_serializers: dict[str, type[serializers.Serializer]],
     response_serializer: type[serializers.Serializer],
     queryset: models.QuerySet[M] | None,
@@ -376,6 +406,10 @@ def create_viewset_class(
     lookup_url_kwarg: str | None,
     filter_specs: tuple[FilterSpec, ...],
     order_specs: tuple[OrderSpec, ...],
+    list_query: type[object] | None,
+    list_query_filter_specs: tuple[ListQueryFilterSpec, ...],
+    list_query_search_specs: tuple[ListQuerySearchSpec, ...],
+    list_query_ordering_specs: tuple[ListQueryOrderingSpec, ...],
     stat_specs: tuple[AggregateStatSpec, ...],
     annotation_specs: tuple[AnnotationSpec, ...],
     parent_scope: ParentScopeSpec | None,
@@ -446,6 +480,22 @@ def create_viewset_class(
             queryset = self.filter_queryset(self.get_queryset())
             queryset = apply_filter_specs(queryset, request.query_params, filter_specs)
             queryset = apply_order_specs(queryset, request.query_params, order_specs)
+            if list_query is not None:
+                if list_query_serializer is None:
+                    msg = "Advanced list query configuration is missing its serializer."
+                    raise TypeError(msg)
+                query_dto = validated_query_dataclass(
+                    serializer_class=list_query_serializer,
+                    request=request,
+                    dataclass_type=list_query,
+                )
+                queryset = apply_list_query_dataclass(
+                    queryset,
+                    query_dto,
+                    filter_specs=list_query_filter_specs,
+                    search_specs=list_query_search_specs,
+                    ordering_specs=list_query_ordering_specs,
+                )
             filtered_collection = filter_collection_for_acl(
                 queryset=queryset,
                 request=request,

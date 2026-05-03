@@ -35,6 +35,14 @@ from .factory import CRUDFactory
 from .field_subresources import FieldSubresourceSpec, field_subresource
 from ._nested_writes import NestedWriteSpec, nested_relation
 from .filters import filterable
+from .list_queries import (
+    query_exclude,
+    query_filter,
+    query_list,
+    query_ordering,
+    query_range,
+    query_search,
+)
 from .ordering import orderable
 from .pagination import page_number_pagination
 from .parent_scopes import ParentScopeSpec, parent_scope
@@ -99,6 +107,12 @@ __all__ = [
     "orderable",
     "page_number_pagination",
     "parent_scope",
+    "query_exclude",
+    "query_filter",
+    "query_list",
+    "query_ordering",
+    "query_range",
+    "query_search",
     "range_",
     "regex",
     "related_list",

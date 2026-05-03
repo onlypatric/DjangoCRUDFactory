@@ -69,6 +69,11 @@ from crudfactory import (
     nested_relation,
     orderable,
     parent_scope,
+    query_exclude,
+    query_list,
+    query_ordering,
+    query_range,
+    query_search,
     range_,
     regex,
     related_list,
@@ -776,6 +781,19 @@ class WidgetBodyCollectionActionDTO:
 
 
 @dataclass
+class WidgetListQueryDTO:
+    names: list[str] | None = field(default=None, metadata=query_list("name"))
+    min_count: int | None = field(default=None, metadata=query_range("count", op="gte"))
+    max_count: int | None = field(default=None, metadata=query_range("count", op="lte"))
+    search: str | None = field(default=None, metadata=query_search("name", "secret"))
+    exclude_name: str | None = field(
+        default=None,
+        metadata=query_exclude("name", op="icontains"),
+    )
+    sort: str | None = field(default=None, metadata=query_ordering("name", "count"))
+
+
+@dataclass
 class WidgetBulkPatchDTO:
     id: int
     name: str | None = field(
@@ -1053,6 +1071,17 @@ class CRUDFactoryTests(unittest.TestCase):
                     methods=("get",),
                 ),
             ),
+        }
+        config.update(overrides)
+        return CRUDFactory(**config)
+
+    def build_list_query_factory(self, **overrides: object) -> CRUDFactory:
+        config = {
+            "model": Widget,
+            "response_mapper": widget_to_response,
+            "queryset": Widget.objects.order_by("id"),
+            "read_only": True,
+            "list_query": WidgetListQueryDTO,
         }
         config.update(overrides)
         return CRUDFactory(**config)
@@ -2092,6 +2121,67 @@ class CRUDFactoryTests(unittest.TestCase):
         self.assertIn("`GET /api/widgets/grouped/`", markdown)
         self.assertIn("`WidgetGroupQueryDTO`", markdown)
         self.assertIn("`WidgetGroupResponseDTO`", markdown)
+
+    def test_list_query_dto_filters_searches_and_excludes_queryset(self) -> None:
+        Widget.objects.create(name="alpha", count=2, secret="needle")
+        Widget.objects.create(name="beta", count=4, secret="needle")
+        Widget.objects.create(name="gamma", count=6, secret="other")
+        viewset_class = self.build_list_query_factory().get_viewset_class()
+
+        response = viewset_class.as_view({"get": "list"})(
+            self.request_factory.get(
+                "/widgets/?search=needle&min_count=3&exclude_name=alp"
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data,
+            [
+                {
+                    "id": ANY,
+                    "name": "beta",
+                    "count": 4,
+                    "label": "beta:4",
+                }
+            ],
+        )
+
+    def test_list_query_dto_supports_list_values_and_ordering(self) -> None:
+        Widget.objects.create(name="alpha", count=2)
+        Widget.objects.create(name="beta", count=7)
+        Widget.objects.create(name="gamma", count=4)
+        viewset_class = self.build_list_query_factory().get_viewset_class()
+
+        response = viewset_class.as_view({"get": "list"})(
+            self.request_factory.get("/widgets/?names=alpha&names=beta&sort=-count")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [item["name"] for item in response.data],
+            ["beta", "alpha"],
+        )
+
+    def test_list_query_dto_invalid_query_params_return_400(self) -> None:
+        viewset_class = self.build_list_query_factory().get_viewset_class()
+
+        response = viewset_class.as_view({"get": "list"})(
+            self.request_factory.get("/widgets/?min_count=oops")
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("min_count", response.data)
+
+    def test_list_query_markdown_docs_include_advanced_query_contract(self) -> None:
+        markdown = self.build_list_query_factory(route="widgets").render_markdown_docs(
+            title="Widget Factory",
+            base_path="/api",
+        )
+
+        self.assertIn("### Advanced List Query DTO", markdown)
+        self.assertIn("`WidgetListQueryDTO`", markdown)
+        self.assertIn("List query search across", markdown)
 
     def test_query_collection_action_reads_query_params_and_ignores_body(self) -> None:
         Widget.objects.create(name="alpha", count=1)

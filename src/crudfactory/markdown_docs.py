@@ -19,6 +19,14 @@ from .annotations import (
 )
 from .filters import FILTER_METADATA_KEY, FilterDeclaration
 from .field_subresources import field_subresource_payload_label
+from .list_queries import (
+    LIST_QUERY_FILTER_METADATA_KEY,
+    LIST_QUERY_ORDERING_METADATA_KEY,
+    LIST_QUERY_SEARCH_METADATA_KEY,
+    ListQueryFilterDeclaration,
+    ListQueryOrderingDeclaration,
+    ListQuerySearchDeclaration,
+)
 from .ordering import ORDERING_QUERY_PARAM, ORDER_METADATA_KEY
 from .related_collections import RELATED_LIST_METADATA_KEY, RelatedListDeclaration
 from .source_queries import SOURCE_FILTER_METADATA_KEY, SOURCE_ORDER_METADATA_KEY
@@ -173,6 +181,11 @@ def factory_route_path(
 
 def query_feature_lines(factory: CRUDFactory[Any, Any, Any, Any, Any]) -> list[str]:
     lines: list[str] = []
+    if factory.list_query is not None:
+        lines.append("### Advanced List Query DTO")
+        lines.append("")
+        lines.extend(dataclass_section_lines(factory.list_query))
+        lines.append("")
     if factory.filter_specs:
         lines.append("### Filters")
         lines.append("")
@@ -525,6 +538,31 @@ def field_metadata_lines(dataclass_field: Field[Any]) -> list[str]:
             lines.append(f"Source orderable: `{dataclass_field.name}`")
         elif isinstance(raw_order, str):
             lines.append(f"Source orderable: `{raw_order}`")
+    if LIST_QUERY_FILTER_METADATA_KEY in metadata:
+        declaration = metadata[LIST_QUERY_FILTER_METADATA_KEY]
+        if isinstance(declaration, ListQueryFilterDeclaration):
+            lookup = declaration.lookup or dataclass_field.name
+            action = "exclude" if declaration.exclude else "filter"
+            lines.append(
+                f"List query {action}: `{lookup}` with lookup `{declaration.op}`"
+            )
+    if LIST_QUERY_SEARCH_METADATA_KEY in metadata:
+        declaration = metadata[LIST_QUERY_SEARCH_METADATA_KEY]
+        if isinstance(declaration, ListQuerySearchDeclaration):
+            lines.append(
+                "List query search across: "
+                + ", ".join(f"`{field_name}`" for field_name in declaration.fields)
+            )
+    if LIST_QUERY_ORDERING_METADATA_KEY in metadata:
+        declaration = metadata[LIST_QUERY_ORDERING_METADATA_KEY]
+        if isinstance(declaration, ListQueryOrderingDeclaration):
+            lines.append(
+                "List query ordering: "
+                + ", ".join(
+                    f"`{public_name}` -> `{lookup}`"
+                    for public_name, lookup in declaration.allowed.items()
+                )
+            )
     if STAT_METADATA_KEY in metadata:
         declaration = metadata[STAT_METADATA_KEY]
         if isinstance(declaration, AggregateStatDeclaration):
