@@ -12,6 +12,7 @@ from rest_framework import serializers
 from rest_framework.viewsets import ModelViewSet
 
 from .actions import CustomActionSpec
+from .bulk_actions import BulkActionSpec
 from .dataclass_serializers import (
     build_serializer_fields,
     ensure_dataclass_type,
@@ -195,6 +196,9 @@ def apply_schema_metadata(
     grouped_actions: tuple[Any, ...] = (),
     grouped_action_serializers: dict[str, type[serializers.Serializer]] | None = None,
     grouped_action_response_serializers: dict[str, type[serializers.Serializer]] | None = None,
+    bulk_actions: tuple[BulkActionSpec[Any], ...] = (),
+    bulk_action_serializers: dict[str, type[serializers.Serializer]] | None = None,
+    bulk_action_response_serializers: dict[str, type[serializers.Serializer]] | None = None,
     field_subresources: tuple[FieldSubresourceSpec, ...] = (),
 ) -> None:
     """Attach serializer metadata useful to DRF and optional schema tools."""
@@ -225,6 +229,9 @@ def apply_schema_metadata(
         grouped_actions=grouped_actions,
         grouped_action_serializers=grouped_action_serializers or {},
         grouped_action_response_serializers=grouped_action_response_serializers or {},
+        bulk_actions=bulk_actions,
+        bulk_action_serializers=bulk_action_serializers or {},
+        bulk_action_response_serializers=bulk_action_response_serializers or {},
         field_subresources=field_subresources,
     )
 
@@ -263,6 +270,9 @@ def apply_drf_spectacular_metadata(
     grouped_actions: tuple[Any, ...],
     grouped_action_serializers: dict[str, type[serializers.Serializer]],
     grouped_action_response_serializers: dict[str, type[serializers.Serializer]],
+    bulk_actions: tuple[BulkActionSpec[Any], ...],
+    bulk_action_serializers: dict[str, type[serializers.Serializer]],
+    bulk_action_response_serializers: dict[str, type[serializers.Serializer]],
     field_subresources: tuple[FieldSubresourceSpec, ...],
 ) -> None:
     """Decorate generated actions when drf-spectacular is installed.
@@ -304,6 +314,13 @@ def apply_drf_spectacular_metadata(
             OpenApiParameter=OpenApiParameter,
             extend_schema=extend_schema,
         )
+        decorate_bulk_actions(
+            viewset_class=viewset_class,
+            bulk_actions=bulk_actions,
+            bulk_action_serializers=bulk_action_serializers,
+            bulk_action_response_serializers=bulk_action_response_serializers,
+            extend_schema=extend_schema,
+        )
         decorate_field_subresources(
             viewset_class=viewset_class,
             model=model,
@@ -337,6 +354,13 @@ def apply_drf_spectacular_metadata(
         grouped_actions=grouped_actions,
         grouped_action_response_serializers=grouped_action_response_serializers,
         OpenApiParameter=OpenApiParameter,
+        extend_schema=extend_schema,
+    )
+    decorate_bulk_actions(
+        viewset_class=viewset_class,
+        bulk_actions=bulk_actions,
+        bulk_action_serializers=bulk_action_serializers,
+        bulk_action_response_serializers=bulk_action_response_serializers,
         extend_schema=extend_schema,
     )
     decorate_field_subresources(
@@ -411,6 +435,30 @@ def decorate_grouped_actions(
                     OpenApiParameter=OpenApiParameter,
                 ),
                 responses=response_serializer,
+            )(action_method),
+        )
+
+
+def decorate_bulk_actions(
+    *,
+    viewset_class: type[ModelViewSet],
+    bulk_actions: tuple[BulkActionSpec[Any], ...],
+    bulk_action_serializers: dict[str, type[serializers.Serializer]],
+    bulk_action_response_serializers: dict[str, type[serializers.Serializer]],
+    extend_schema: Any,
+) -> None:
+    """Decorate generated bulk mutation endpoints with list-body schemas."""
+    for bulk_action in bulk_actions:
+        request_serializer = bulk_action_serializers[bulk_action.name]
+        response_serializer = bulk_action_response_serializers[bulk_action.name]
+        action_method = getattr(viewset_class, bulk_action.name)
+        setattr(
+            viewset_class,
+            bulk_action.name,
+            extend_schema(
+                request=request_serializer(many=True),
+                responses=response_serializer,
+                description=bulk_action_description(bulk_action),
             )(action_method),
         )
 
@@ -575,6 +623,14 @@ def field_subresource_description(field_subresource: FieldSubresourceSpec) -> st
             f"PATCH uses `{field_subresource.patch_mode}` semantics."
         )
     return f"Read the `{field_subresource.field_name}` field directly."
+
+
+def bulk_action_description(bulk_action: BulkActionSpec[Any]) -> str:
+    """Return a short OpenAPI description for one generated bulk endpoint."""
+    return (
+        f"Bulk `{bulk_action.kind}` endpoint over a JSON list payload. "
+        f"Transaction mode: `{bulk_action.transaction_mode}`."
+    )
 
 
 def is_required_dataclass_field(dataclass_field: Field[Any]) -> bool:

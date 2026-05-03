@@ -11,6 +11,7 @@ from .actions import (
     GroupedCollectionActionSpec,
     GroupedCollectionSourceACL,
 )
+from .bulk_actions import BulkActionSpec
 from ._nested_writes import NestedWriteSpec, validate_nested_write_dataclass
 from .dataclass_serializers import (
     ensure_dataclass_type,
@@ -52,6 +53,7 @@ def validate_factory_configuration(
     field_subresources: tuple[FieldSubresourceSpec, ...],
     custom_actions: tuple[CustomActionSpec[M], ...],
     grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
+    bulk_actions: tuple[BulkActionSpec[object], ...],
     acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None,
     app_name: str,
     route: str,
@@ -69,6 +71,13 @@ def validate_factory_configuration(
     validate_response_mapper_dataclass(response_mapper)
     validate_custom_actions(custom_actions)
     validate_grouped_actions(grouped_actions)
+    validate_bulk_actions(
+        create_input=create_input,
+        update_input=update_input,
+        partial_update_input=partial_update_input,
+        bulk_actions=bulk_actions,
+        read_only=read_only,
+    )
     validate_acl_configuration(acl, custom_actions, grouped_actions)
     validate_field_subresources(
         model=model,
@@ -273,6 +282,96 @@ def validate_grouped_actions(
         source_filter_specs_from_dataclass(grouped_action.query_dataclass)
         source_order_specs_from_dataclass(grouped_action.query_dataclass)
         validate_grouped_action_source_acl(grouped_action.source_acl)
+
+
+def validate_bulk_actions(
+    *,
+    create_input: type[CreateDTO] | None,
+    update_input: type[UpdateDTO] | None,
+    partial_update_input: type[PatchDTO] | None,
+    bulk_actions: tuple[BulkActionSpec[object], ...],
+    read_only: bool,
+) -> None:
+    """Validate generated bulk mutation action contracts."""
+    if read_only and bulk_actions:
+        raise TypeError("Bulk actions cannot be used on read_only factories.")
+    seen_names: set[str] = set()
+    for bulk_action in bulk_actions:
+        validate_non_empty_string("bulk action name", bulk_action.name)
+        if bulk_action.name in seen_names:
+            msg = f"Duplicate bulk action name {bulk_action.name!r}."
+            raise ValueError(msg)
+        seen_names.add(bulk_action.name)
+        validate_bulk_action_contract(
+            create_input=create_input,
+            update_input=update_input,
+            partial_update_input=partial_update_input,
+            bulk_action=bulk_action,
+        )
+
+
+def validate_bulk_action_contract(
+    *,
+    create_input: type[CreateDTO] | None,
+    update_input: type[UpdateDTO] | None,
+    partial_update_input: type[PatchDTO] | None,
+    bulk_action: BulkActionSpec[object],
+) -> None:
+    """Validate one bulk action against the enclosing factory write DTOs."""
+    if bulk_action.kind == "create":
+        effective_input = bulk_action.input_dataclass or create_input
+        if effective_input is None:
+            raise TypeError(
+                "bulk create requires create_input or an explicit input_dataclass."
+            )
+        validate_input_dataclass(
+            f"bulk action {bulk_action.name} input_dataclass",
+            effective_input,
+        )
+        return
+
+    if bulk_action.input_dataclass is None:
+        msg = (
+            f"Bulk action {bulk_action.name!r} requires an explicit input_dataclass "
+            "for row identifiers."
+        )
+        raise TypeError(msg)
+    validate_input_dataclass(
+        f"bulk action {bulk_action.name} input_dataclass",
+        bulk_action.input_dataclass,
+    )
+
+    if bulk_action.identifier_field is None or bulk_action.lookup_field is None:
+        msg = f"Bulk action {bulk_action.name!r} requires identifier_field and lookup_field."
+        raise TypeError(msg)
+
+    if bulk_action.kind == "update":
+        target_dataclass = bulk_action.handler_dataclass or update_input
+        if target_dataclass is None:
+            raise TypeError(
+                "bulk update requires update_input or an explicit handler_dataclass."
+            )
+        validate_input_dataclass(
+            f"bulk action {bulk_action.name} handler_dataclass",
+            target_dataclass,
+        )
+        return
+
+    if bulk_action.kind == "patch":
+        target_dataclass = bulk_action.handler_dataclass or partial_update_input
+        if target_dataclass is None:
+            raise TypeError(
+                "bulk patch requires partial_update_input or an explicit handler_dataclass."
+            )
+        validate_input_dataclass(
+            f"bulk action {bulk_action.name} handler_dataclass",
+            target_dataclass,
+        )
+        validate_partial_update_dataclass(target_dataclass)
+        return
+
+    if bulk_action.kind != "delete":
+        raise ValueError(f"Unsupported bulk action kind {bulk_action.kind!r}.")
 
 
 def validate_acl_configuration(

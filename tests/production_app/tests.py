@@ -501,6 +501,63 @@ class EVInfrastructureCRUDIntegrationTests(TestCase):
         self.assertEqual([item["name"] for item in list_response.data], ["Connector 1A"])
         self.assertEqual(delete_response.status_code, 204)
 
+    def test_connector_bulk_operations_return_structured_results(self) -> None:
+        location = self.create_location(name="Bulk Hub")
+        chargepoint = self.create_chargepoint(
+            location=location,
+            name="Bulk CP",
+            serial_number="BULK-CP-01",
+        )
+
+        bulk_create_response = self.client.post(
+            "/api/connectors/bulk-create/",
+            [
+                {
+                    "chargepoint_id": chargepoint.pk,
+                    "name": "Bulk Connector 1",
+                    "connector_type": "CCS",
+                    "status": "online",
+                    "is_locked": False,
+                    "power_kw": "80.00",
+                    "current_a": 200,
+                    "voltage_v": 400,
+                },
+                {
+                    "chargepoint_id": chargepoint.pk,
+                    "name": "x",
+                    "connector_type": "CCS",
+                    "status": "online",
+                    "is_locked": False,
+                    "power_kw": "80.00",
+                    "current_a": 200,
+                    "voltage_v": 400,
+                },
+            ],
+            format="json",
+        )
+
+        created_ids = [int(identifier) for identifier in bulk_create_response.data["succeeded_identifiers"]]
+        bulk_patch_response = self.client.patch(
+            "/api/connectors/bulk-patch/",
+            [
+                {"id": created_ids[0], "status": "faulted"},
+            ],
+            format="json",
+        )
+        bulk_delete_response = self.client.delete(
+            "/api/connectors/bulk-delete/",
+            [{"id": created_ids[0]}],
+            format="json",
+        )
+
+        self.assertEqual(bulk_create_response.status_code, 200)
+        self.assertEqual(bulk_create_response.data["created"], 1)
+        self.assertEqual(bulk_create_response.data["failed"], 1)
+        self.assertEqual(bulk_patch_response.status_code, 200)
+        self.assertEqual(bulk_patch_response.data["updated"], 1)
+        self.assertEqual(bulk_delete_response.status_code, 200)
+        self.assertEqual(bulk_delete_response.data["deleted"], 1)
+
     def test_connector_start_rejects_locked_connector(self) -> None:
         location = self.create_location()
         chargepoint = self.create_chargepoint(location=location)
@@ -854,6 +911,35 @@ class ConnectorACLIntegrationTests(TestCase):
         self.assertEqual(connector.metadata, {"source": "patched", "visible": True})
         self.assertEqual(denied_response.status_code, 404)
 
+    def test_connector_bulk_patch_reports_acl_row_denials(self) -> None:
+        allowed = self.create_connector_fixture(
+            connector_name="Allowed Connector",
+            serial_number="ACL-CP-06",
+        )
+        denied = self.create_connector_fixture(
+            connector_name="Denied Connector",
+            serial_number="ACL-CP-07",
+        )
+        self.grant(self.operator, "app.connector.update", allowed)
+
+        self.client.force_authenticate(user=self.operator)
+        response = self.client.patch(
+            "/api/connectors/bulk-patch/",
+            [
+                {"id": allowed.pk, "status": "faulted"},
+                {"id": denied.pk, "status": "faulted"},
+            ],
+            format="json",
+        )
+
+        allowed.refresh_from_db()
+        denied.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["updated"], 1)
+        self.assertEqual(response.data["failed"], 1)
+        self.assertEqual(allowed.status, "faulted")
+        self.assertEqual(denied.status, "online")
+
 
 class MonitoringGroupedActionIntegrationTests(TestCase):
     client: APIClient
@@ -1045,8 +1131,10 @@ class FactoryDocsServerTests(TestCase):
         self.assertIn("## Request DTOs", body)
         self.assertIn("## Response DTO", body)
         self.assertIn("## Field Subresource Endpoints", body)
+        self.assertIn("## Bulk Operations", body)
         self.assertIn("`GET, PATCH /api/connectors/{pk}/metadata/`", body)
         self.assertIn("ConnectorActionInputDTO", body)
+        self.assertIn("### `bulk_patch`", body)
 
     def test_inventory_factory_doc_mentions_query_collection_action(self) -> None:
         client = APIClient()

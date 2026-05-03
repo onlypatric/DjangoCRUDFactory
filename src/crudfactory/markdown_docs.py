@@ -76,6 +76,10 @@ def render_factory_markdown(
     lines.append("## Grouped Collection Actions")
     lines.append("")
     lines.extend(grouped_action_lines(factory))
+    lines.append("")
+    lines.append("## Bulk Operations")
+    lines.append("")
+    lines.extend(bulk_action_lines(factory))
     return "\n".join(lines).strip() + "\n"
 
 
@@ -130,6 +134,10 @@ def endpoint_lines(
         action_path = f"{route_path}{grouped_action.url_path or grouped_action.name}/"
         methods = ", ".join(method.upper() for method in grouped_action.methods)
         lines.append(f"- `{methods} {action_path}`: grouped {grouped_action.name}")
+    for bulk_action in getattr(factory, "bulk_actions", ()):
+        action_path = f"{route_path}{bulk_action.url_path or bulk_action.name}/"
+        methods = ", ".join(method.upper() for method in bulk_action.methods)
+        lines.append(f"- `{methods} {action_path}`: bulk {bulk_action.kind}")
     for field_subresource in getattr(factory, "field_subresources", ()):
         action_path = (
             f"{detail_path}{field_subresource.url_path or field_subresource.field_name}/"
@@ -371,6 +379,39 @@ def grouped_action_lines(factory: CRUDFactory[Any, Any, Any, Any, Any]) -> list[
         lines.extend(
             indent_lines(dataclass_section_lines(grouped_action.response_dataclass))
         )
+        lines.append("")
+    return trim_trailing_blank(lines)
+
+
+def bulk_action_lines(factory: CRUDFactory[Any, Any, Any, Any, Any]) -> list[str]:
+    """Describe generated bulk mutation endpoints."""
+    bulk_actions = getattr(factory, "bulk_actions", ())
+    if not bulk_actions:
+        return ["This factory does not declare bulk mutation endpoints."]
+
+    lines: list[str] = []
+    for bulk_action in bulk_actions:
+        lines.append(f"### `{bulk_action.name}`")
+        lines.append("")
+        lines.append(f"- Kind: `{bulk_action.kind}`")
+        lines.append(
+            f"- Methods: `{', '.join(method.upper() for method in bulk_action.methods)}`"
+        )
+        lines.append(f"- Transaction mode: `{bulk_action.transaction_mode}`")
+        if bulk_action.identifier_field is not None:
+            lines.append(f"- Identifier field: `{bulk_action.identifier_field}`")
+        if bulk_action.lookup_field is not None:
+            lines.append(f"- Lookup field: `{bulk_action.lookup_field}`")
+        lines.append("- Row DTO:")
+        input_dataclass = bulk_action.input_dataclass
+        if input_dataclass is not None:
+            lines.extend(indent_lines(dataclass_section_lines(input_dataclass)))
+        else:
+            lines.append("  - Uses the factory `create_input` contract.")
+        lines.append("- Result DTO:")
+        from .bulk_actions import BulkMutationResultDTO
+
+        lines.extend(indent_lines(dataclass_section_lines(BulkMutationResultDTO)))
         lines.append("")
     return trim_trailing_blank(lines)
 

@@ -64,6 +64,19 @@ def construct_dataclass(dataclass_type: type[D], data: dict[str, object]) -> D:
         raise serializers.ValidationError(msg) from exc
 
 
+def project_dataclass(
+    source_value: object,
+    dataclass_type: type[D],
+    *,
+    fill_missing_optional: bool = False,
+) -> D:
+    """Construct one dataclass from overlapping attributes on another object."""
+    projected_data = projected_dataclass_values(source_value, dataclass_type)
+    if fill_missing_optional:
+        fill_missing_optional_fields(projected_data, dataclass_type)
+    return construct_dataclass(dataclass_type, projected_data)
+
+
 def dataclass_constructor_values(
     dataclass_type: type[D],
     data: dict[str, object],
@@ -81,6 +94,22 @@ def dataclass_constructor_values(
             value=data[dataclass_field.name],
         )
 
+    return constructor_values
+
+
+def projected_dataclass_values(
+    source_value: object,
+    dataclass_type: type[D],
+) -> dict[str, object]:
+    """Return constructor values shared between an object and a target dataclass."""
+    constructor_values: dict[str, object] = {}
+    for dataclass_field in fields(cast(Any, dataclass_type)):
+        if not hasattr(source_value, dataclass_field.name):
+            continue
+        constructor_values[dataclass_field.name] = getattr(
+            source_value,
+            dataclass_field.name,
+        )
     return constructor_values
 
 

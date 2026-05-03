@@ -18,6 +18,7 @@ from .annotations import (
     instance_with_annotation_specs,
 )
 from ._auto_response import build_auto_response_mapper, build_declared_response_mapper
+from .bulk_actions import BulkActionSpec
 from .filters import FilterSpec, filter_specs_from_response_mapper
 from .field_subresources import (
     FieldSubresourceSpec,
@@ -90,6 +91,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         field_subresources: Sequence[FieldSubresourceSpec] | None = None,
         custom_actions: Sequence[CustomActionSpec[M]] | None = None,
         grouped_actions: Sequence[GroupedCollectionActionSpec[M]] | None = None,
+        bulk_actions: Sequence[BulkActionSpec[Any]] | None = None,
         acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None = None,
         read_only: bool = False,
         app_name: str | None = None,
@@ -152,6 +154,9 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         self.grouped_actions: tuple[GroupedCollectionActionSpec[M], ...] = (
             normalize_grouped_actions(grouped_actions)
         )
+        self.bulk_actions: tuple[BulkActionSpec[Any], ...] = normalize_bulk_actions(
+            bulk_actions
+        )
         self.acl = acl
         self.is_read_only = read_only
         self.app_name: str = resolve_app_name(model, app_name)
@@ -197,6 +202,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             field_subresources=self.field_subresources,
             custom_actions=self.custom_actions,
             grouped_actions=self.grouped_actions,
+            bulk_actions=self.bulk_actions,
             acl=self.acl,
             app_name=self.app_name,
             route=self.route,
@@ -217,6 +223,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             partial_update_handler=self.partial_update_handler,
             custom_actions=self.custom_actions,
             grouped_actions=self.grouped_actions,
+            bulk_actions=self.bulk_actions,
             field_subresources=self.field_subresources,
             acl=self.acl,
             read_only=self.is_read_only,
@@ -250,6 +257,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         pagination_class: type[BasePagination] | None = None,
         custom_actions: Sequence[CustomActionSpec[M]] | None = None,
         grouped_actions: Sequence[GroupedCollectionActionSpec[M]] | None = None,
+        bulk_actions: Sequence[BulkActionSpec[Any]] | None = None,
         field_subresources: Sequence[FieldSubresourceSpec] | None = None,
         acl: ACLConfig[M, object, object, object] | None = None,
     ) -> CRUDFactory[M, object, object, object, ResponseDTO]:
@@ -270,6 +278,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             pagination_class=pagination_class,
             custom_actions=custom_actions,
             grouped_actions=grouped_actions,
+            bulk_actions=bulk_actions,
             field_subresources=field_subresources,
             acl=acl,
         )
@@ -427,6 +436,15 @@ def normalize_grouped_actions(
     if grouped_actions is None:
         return ()
     return tuple(grouped_actions)
+
+
+def normalize_bulk_actions(
+    bulk_actions: Sequence[BulkActionSpec[Any]] | None,
+) -> tuple[BulkActionSpec[Any], ...]:
+    """Freeze optional bulk action specs for generated ViewSet stability."""
+    if bulk_actions is None:
+        return ()
+    return tuple(bulk_actions)
 
 
 def normalize_writable_fields(

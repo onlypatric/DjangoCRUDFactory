@@ -10,6 +10,16 @@ from .actions import (
     detail_action,
     grouped_collection_action,
 )
+from .bulk_actions import (
+    BulkActionSpec,
+    BulkFieldErrorDTO,
+    BulkMutationResultDTO,
+    BulkRowErrorDTO,
+    bulk_create_action,
+    bulk_delete_action,
+    bulk_patch_action,
+    bulk_update_action,
+)
 from .annotations import annotated_field
 from .factory import CRUDFactory
 from .field_subresources import FieldSubresourceSpec, field_subresource
@@ -41,11 +51,19 @@ __all__ = [
     "ACLPermissionSeed",
     "ACLResourceRef",
     "ACLResourceSeed",
+    "BulkActionSpec",
+    "BulkFieldErrorDTO",
+    "BulkMutationResultDTO",
+    "BulkRowErrorDTO",
     "FieldSubresourceSpec",
     "GroupedCollectionSourceACL",
     "NestedWriteSpec",
     "avg_stat",
     "annotated_field",
+    "bulk_create_action",
+    "bulk_delete_action",
+    "bulk_patch_action",
+    "bulk_update_action",
     "choices",
     "collection_action",
     "count_stat",

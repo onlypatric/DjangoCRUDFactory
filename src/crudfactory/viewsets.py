@@ -3,10 +3,11 @@ from __future__ import annotations
 from typing import Any, Callable, Sequence, cast
 
 from django.db import models
+from django.db import transaction
 from rest_framework import serializers, status
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.decorators import action
-from rest_framework.exceptions import MethodNotAllowed
+from rest_framework.exceptions import MethodNotAllowed, NotFound, PermissionDenied, ValidationError
 from rest_framework.pagination import BasePagination
 from rest_framework.permissions import BasePermission
 from rest_framework.request import Request
@@ -29,6 +30,12 @@ from .annotations import (
     annotate_queryset_with_annotation_specs,
     instance_with_annotation_specs,
 )
+from .bulk_actions import (
+    BulkActionSpec,
+    BulkFieldErrorDTO,
+    BulkMutationResultDTO,
+    BulkRowErrorDTO,
+)
 from .dataclass_serializers import build_serializer_from_dataclass
 from .filters import FilterSpec, apply_filter_specs, response_dataclass_from_mapper
 from .field_subresources import (
@@ -38,7 +45,7 @@ from .field_subresources import (
     read_field_payload,
     validated_field_payload,
 )
-from .inputs import serializer_to_dataclass
+from .inputs import project_dataclass, serializer_to_dataclass
 from .ordering import OrderSpec, apply_order_specs
 from .response import dataclass_instance_to_response_data, map_instance_to_response_data
 from .schema import (
@@ -82,6 +89,7 @@ def build_crud_viewset_class(
     partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
     custom_actions: tuple[CustomActionSpec[M], ...],
     grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
+    bulk_actions: tuple[BulkActionSpec[Any], ...],
     field_subresources: tuple[FieldSubresourceSpec, ...],
     acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None,
     read_only: bool,
@@ -121,6 +129,13 @@ def build_crud_viewset_class(
     grouped_action_response_serializers = build_grouped_action_response_serializers(
         grouped_actions
     )
+    bulk_action_serializers = build_bulk_action_serializers(
+        bulk_actions=bulk_actions,
+        create_input=create_input,
+    )
+    bulk_action_response_serializers = build_bulk_action_response_serializers(
+        bulk_actions
+    )
     viewset_class = create_viewset_class(
         model=model,
         response_mapper=response_mapper,
@@ -132,12 +147,14 @@ def build_crud_viewset_class(
         partial_update_handler=partial_update_handler,
         custom_actions=custom_actions,
         grouped_actions=grouped_actions,
+        bulk_actions=bulk_actions,
         acl=acl,
         read_only=read_only,
         serializers_by_action=serializers_by_action,
         custom_action_serializers=custom_action_serializers,
         custom_action_response_serializers=custom_action_response_serializers,
         grouped_action_serializers=grouped_action_serializers,
+        bulk_action_serializers=bulk_action_serializers,
         response_serializer=response_serializer,
         field_subresources=field_subresources,
         queryset=queryset,
@@ -164,6 +181,9 @@ def build_crud_viewset_class(
         grouped_actions=grouped_actions,
         grouped_action_serializers=grouped_action_serializers,
         grouped_action_response_serializers=grouped_action_response_serializers,
+        bulk_actions=bulk_actions,
+        bulk_action_serializers=bulk_action_serializers,
+        bulk_action_response_serializers=bulk_action_response_serializers,
         field_subresources=field_subresources,
     )
     apply_optional_viewset_attributes(
@@ -266,6 +286,38 @@ def build_grouped_action_response_serializers(
     }
 
 
+def build_bulk_action_serializers(
+    *,
+    bulk_actions: tuple[BulkActionSpec[Any], ...],
+    create_input: type[CreateDTO] | None,
+) -> dict[str, type[serializers.Serializer]]:
+    """Generate one row serializer per bulk mutation endpoint."""
+    serializers_by_name: dict[str, type[serializers.Serializer]] = {}
+    for bulk_action in bulk_actions:
+        dataclass_type = require_bulk_input_dataclass(
+            bulk_action=bulk_action,
+            create_input=create_input,
+        )
+        serializers_by_name[bulk_action.name] = build_serializer_from_dataclass(
+            dataclass_type,
+            name=f"{dataclass_type.__name__}Serializer",
+        )
+    return serializers_by_name
+
+
+def build_bulk_action_response_serializers(
+    bulk_actions: tuple[BulkActionSpec[Any], ...],
+) -> dict[str, type[serializers.Serializer]]:
+    """Generate the shared structured result serializer for bulk endpoints."""
+    return {
+        bulk_action.name: build_response_serializer_from_dataclass(
+            BulkMutationResultDTO,
+            name="BulkMutationResultDTOSerializer",
+        )
+        for bulk_action in bulk_actions
+    }
+
+
 def build_action_serializers_for_mode(
     *,
     model: type[M],
@@ -300,6 +352,7 @@ def create_viewset_class(
     partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
     custom_actions: tuple[CustomActionSpec[M], ...],
     grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
+    bulk_actions: tuple[BulkActionSpec[Any], ...],
     field_subresources: tuple[FieldSubresourceSpec, ...],
     acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None,
     read_only: bool,
@@ -307,6 +360,7 @@ def create_viewset_class(
     custom_action_serializers: dict[str, type[serializers.Serializer]],
     custom_action_response_serializers: dict[str, type[serializers.Serializer]],
     grouped_action_serializers: dict[str, type[serializers.Serializer]],
+    bulk_action_serializers: dict[str, type[serializers.Serializer]],
     response_serializer: type[serializers.Serializer],
     queryset: models.QuerySet[M] | None,
     lookup_field: str,
@@ -512,6 +566,18 @@ def create_viewset_class(
         grouped_action_serializers=grouped_action_serializers,
         acl=acl,
     )
+    attach_bulk_actions(
+        viewset_class=GeneratedCRUDViewSet,
+        create_input=create_input,
+        update_input=update_input,
+        partial_update_input=partial_update_input,
+        create_handler=create_handler,
+        update_handler=update_handler,
+        partial_update_handler=partial_update_handler,
+        bulk_actions=bulk_actions,
+        bulk_action_serializers=bulk_action_serializers,
+        acl=acl,
+    )
     attach_field_subresources(
         viewset_class=GeneratedCRUDViewSet,
         model=model,
@@ -555,6 +621,35 @@ def attach_grouped_collection_actions(
             acl=acl,
         )
         setattr(viewset_class, grouped_action.name, action_method)
+
+
+def attach_bulk_actions(
+    *,
+    viewset_class: type[ModelViewSet],
+    create_input: type[CreateDTO] | None,
+    update_input: type[UpdateDTO] | None,
+    partial_update_input: type[PatchDTO] | None,
+    create_handler: CreateHandler[CreateDTO, M] | None,
+    update_handler: UpdateHandler[M, UpdateDTO] | None,
+    partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
+    bulk_actions: tuple[BulkActionSpec[Any], ...],
+    bulk_action_serializers: dict[str, type[serializers.Serializer]],
+    acl: ACLConfig[M, Any, Any, Any] | None,
+) -> None:
+    """Attach generated bulk mutation endpoints to the ViewSet class."""
+    for bulk_action in bulk_actions:
+        action_method = build_bulk_action_method(
+            create_input=create_input,
+            update_input=update_input,
+            partial_update_input=partial_update_input,
+            create_handler=create_handler,
+            update_handler=update_handler,
+            partial_update_handler=partial_update_handler,
+            bulk_action=bulk_action,
+            serializer_class=bulk_action_serializers[bulk_action.name],
+            acl=acl,
+        )
+        setattr(viewset_class, bulk_action.name, action_method)
 
 
 def attach_field_subresources(
@@ -708,6 +803,523 @@ def build_grouped_collection_action_method(
         url_path=grouped_action.url_path,
         url_name=grouped_action.url_name,
     )(grouped_collection_action_method)
+
+
+def build_bulk_action_method(
+    *,
+    create_input: type[CreateDTO] | None,
+    update_input: type[UpdateDTO] | None,
+    partial_update_input: type[PatchDTO] | None,
+    create_handler: CreateHandler[CreateDTO, M] | None,
+    update_handler: UpdateHandler[M, UpdateDTO] | None,
+    partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
+    bulk_action: BulkActionSpec[Any],
+    serializer_class: type[serializers.Serializer],
+    acl: ACLConfig[M, Any, Any, Any] | None,
+) -> Callable[..., Response]:
+    """Build one generated bulk mutation action method."""
+
+    def bulk_action_method(
+        self: ModelViewSet,
+        request: Request,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Response:
+        input_dataclass = require_bulk_input_dataclass(
+            bulk_action=bulk_action,
+            create_input=create_input,
+        )
+        rows, row_errors = validated_bulk_rows(
+            serializer_class=serializer_class,
+            request=request,
+            dataclass_type=input_dataclass,
+            partial=bulk_action.kind == "patch",
+            fill_missing_optional=bulk_action.kind == "patch",
+        )
+        if bulk_action.transaction_mode == "atomic" and row_errors:
+            return bulk_result_response(
+                result=BulkMutationResultDTO(
+                    failed=len(row_errors),
+                    rolled_back=True,
+                    errors=row_errors,
+                ),
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if bulk_action.transaction_mode == "atomic":
+            try:
+                with transaction.atomic():
+                    result = apply_bulk_rows_atomically(
+                        viewset=self,
+                        request=request,
+                        acl=acl,
+                        bulk_action=bulk_action,
+                        rows=rows,
+                        create_handler=create_handler,
+                        update_handler=update_handler,
+                        partial_update_handler=partial_update_handler,
+                        update_input=update_input,
+                        partial_update_input=partial_update_input,
+                    )
+            except BulkOperationAbort as exc:
+                return bulk_result_response(
+                    result=BulkMutationResultDTO(
+                        failed=1,
+                        rolled_back=True,
+                        errors=[exc.row_error],
+                    ),
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+            return bulk_result_response(
+                result=result,
+                status_code=bulk_success_status_code(bulk_action),
+            )
+
+        result = apply_bulk_rows_best_effort(
+            viewset=self,
+            request=request,
+            acl=acl,
+            bulk_action=bulk_action,
+            rows=rows,
+            initial_errors=row_errors,
+            create_handler=create_handler,
+            update_handler=update_handler,
+            partial_update_handler=partial_update_handler,
+            update_input=update_input,
+            partial_update_input=partial_update_input,
+        )
+        return bulk_result_response(
+            result=result,
+            status_code=bulk_success_status_code(bulk_action, allow_partial=True),
+        )
+
+    bulk_action_method.__name__ = bulk_action.name
+    bulk_action_method.__qualname__ = bulk_action.name
+    bulk_action_method.__doc__ = f"Generated bulk mutation action `{bulk_action.name}`."
+    return action(
+        detail=False,
+        methods=cast(Any, list(bulk_action.methods)),
+        url_path=bulk_action.url_path,
+        url_name=bulk_action.url_name,
+    )(bulk_action_method)
+
+
+class BulkOperationAbort(Exception):
+    """Abort an atomic bulk operation after collecting one structured row error."""
+
+    def __init__(self, row_error: BulkRowErrorDTO) -> None:
+        super().__init__("bulk operation aborted")
+        self.row_error = row_error
+
+
+def validated_bulk_rows(
+    *,
+    serializer_class: type[serializers.Serializer],
+    request: Request,
+    dataclass_type: type[Any],
+    partial: bool = False,
+    fill_missing_optional: bool = False,
+) -> tuple[list[tuple[int, Any]], list[BulkRowErrorDTO]]:
+    """Validate a list request body one row at a time."""
+    if not isinstance(request.data, list):
+        return [], [
+            BulkRowErrorDTO(
+                index=0,
+                identifier=None,
+                errors=[
+                    BulkFieldErrorDTO(
+                        field="non_field_errors",
+                        messages=["Expected a JSON list of objects."],
+                    )
+                ],
+            )
+        ]
+    validated_rows: list[tuple[int, Any]] = []
+    row_errors: list[BulkRowErrorDTO] = []
+    for index, row_payload in enumerate(request.data):
+        serializer = serializer_class(data=row_payload, partial=partial)
+        if not serializer.is_valid():
+            row_errors.append(
+                BulkRowErrorDTO(
+                    index=index,
+                    identifier=identifier_from_raw_payload(row_payload),
+                    errors=normalize_bulk_error_payload(serializer.errors),
+                )
+            )
+            continue
+        validated_rows.append(
+            (
+                index,
+                serializer_to_dataclass(
+                    serializer,
+                    dataclass_type,
+                    fill_missing_optional=fill_missing_optional,
+                ),
+            )
+        )
+    return validated_rows, row_errors
+
+
+def apply_bulk_rows_atomically(
+    *,
+    viewset: ModelViewSet,
+    request: Request,
+    acl: ACLConfig[M, Any, Any, Any] | None,
+    bulk_action: BulkActionSpec[Any],
+    rows: list[tuple[int, Any]],
+    create_handler: CreateHandler[CreateDTO, M] | None,
+    update_handler: UpdateHandler[M, UpdateDTO] | None,
+    partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
+    update_input: type[UpdateDTO] | None,
+    partial_update_input: type[PatchDTO] | None,
+) -> BulkMutationResultDTO:
+    """Apply every row inside one transaction, rolling back on the first failure."""
+    result = empty_bulk_result()
+    for index, dto in rows:
+        row_result = apply_one_bulk_row(
+            viewset=viewset,
+            request=request,
+            acl=acl,
+            bulk_action=bulk_action,
+            index=index,
+            dto=dto,
+            create_handler=create_handler,
+            update_handler=update_handler,
+            partial_update_handler=partial_update_handler,
+            update_input=update_input,
+            partial_update_input=partial_update_input,
+        )
+        if isinstance(row_result, BulkRowErrorDTO):
+            raise BulkOperationAbort(row_result)
+        merge_bulk_success(result, row_result)
+    return result
+
+
+def apply_bulk_rows_best_effort(
+    *,
+    viewset: ModelViewSet,
+    request: Request,
+    acl: ACLConfig[M, Any, Any, Any] | None,
+    bulk_action: BulkActionSpec[Any],
+    rows: list[tuple[int, Any]],
+    initial_errors: list[BulkRowErrorDTO],
+    create_handler: CreateHandler[CreateDTO, M] | None,
+    update_handler: UpdateHandler[M, UpdateDTO] | None,
+    partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
+    update_input: type[UpdateDTO] | None,
+    partial_update_input: type[PatchDTO] | None,
+) -> BulkMutationResultDTO:
+    """Apply valid rows while collecting row-level failures instead of aborting."""
+    result = empty_bulk_result()
+    result.errors.extend(initial_errors)
+    result.failed += len(initial_errors)
+    for index, dto in rows:
+        row_result = apply_one_bulk_row(
+            viewset=viewset,
+            request=request,
+            acl=acl,
+            bulk_action=bulk_action,
+            index=index,
+            dto=dto,
+            create_handler=create_handler,
+            update_handler=update_handler,
+            partial_update_handler=partial_update_handler,
+            update_input=update_input,
+            partial_update_input=partial_update_input,
+        )
+        if isinstance(row_result, BulkRowErrorDTO):
+            result.failed += 1
+            result.errors.append(row_result)
+            continue
+        merge_bulk_success(result, row_result)
+    return result
+
+
+def apply_one_bulk_row(
+    *,
+    viewset: ModelViewSet,
+    request: Request,
+    acl: ACLConfig[M, Any, Any, Any] | None,
+    bulk_action: BulkActionSpec[Any],
+    index: int,
+    dto: Any,
+    create_handler: CreateHandler[CreateDTO, M] | None,
+    update_handler: UpdateHandler[M, UpdateDTO] | None,
+    partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
+    update_input: type[UpdateDTO] | None,
+    partial_update_input: type[PatchDTO] | None,
+) -> BulkMutationResultDTO | BulkRowErrorDTO:
+    """Apply one validated bulk row and return either success counts or one row error."""
+    try:
+        if bulk_action.kind == "create":
+            create_fn = require_write_handler(create_handler, "bulk_create")
+            enforce_create_acl(
+                request=request,
+                acl=acl,
+                action_config=acl_action(acl, "create_action"),
+                dto=dto,
+            )
+            instance = create_fn(dto)
+            return BulkMutationResultDTO(
+                created=1,
+                succeeded_identifiers=[instance_identifier_string(instance)],
+            )
+
+        instance = instance_for_bulk_row(
+            queryset=viewset.get_queryset(),
+            bulk_action=bulk_action,
+            dto=dto,
+        )
+
+        if bulk_action.kind == "update":
+            update_fn = require_write_handler(update_handler, "bulk_update")
+            enforce_instance_acl(
+                request=request,
+                acl=acl,
+                action_config=acl_action(acl, "update_action"),
+                instance=instance,
+                resolver=resource_ref_from_instance(acl),
+            )
+            update_dto = project_dataclass(
+                dto,
+                require_bulk_handler_dataclass(
+                    bulk_action=bulk_action,
+                    fallback_dataclass=update_input,
+                    action_name="bulk_update",
+                ),
+            )
+            enforce_target_update_acl(
+                request=request,
+                acl=acl,
+                action_config=acl_action(acl, "update_action"),
+                instance=instance,
+                dto=update_dto,
+                resolver=resource_ref_from_update_input(acl),
+            )
+            updated_instance = update_fn(instance, update_dto)
+            return BulkMutationResultDTO(
+                updated=1,
+                succeeded_identifiers=[instance_identifier_string(updated_instance)],
+            )
+
+        if bulk_action.kind == "patch":
+            patch_fn = require_write_handler(partial_update_handler, "bulk_patch")
+            enforce_instance_acl(
+                request=request,
+                acl=acl,
+                action_config=acl_action(acl, "partial_update_action"),
+                instance=instance,
+                resolver=resource_ref_from_instance(acl),
+            )
+            patch_dto = project_dataclass(
+                dto,
+                require_bulk_handler_dataclass(
+                    bulk_action=bulk_action,
+                    fallback_dataclass=partial_update_input,
+                    action_name="bulk_patch",
+                ),
+                fill_missing_optional=True,
+            )
+            enforce_target_patch_acl(
+                request=request,
+                acl=acl,
+                action_config=acl_action(acl, "partial_update_action"),
+                instance=instance,
+                dto=patch_dto,
+                resolver=resource_ref_from_patch_input(acl),
+            )
+            updated_instance = patch_fn(instance, patch_dto)
+            return BulkMutationResultDTO(
+                updated=1,
+                succeeded_identifiers=[instance_identifier_string(updated_instance)],
+            )
+
+        if bulk_action.kind == "delete":
+            enforce_instance_acl(
+                request=request,
+                acl=acl,
+                action_config=acl_action(acl, "destroy_action"),
+                instance=instance,
+                resolver=resource_ref_from_instance(acl),
+            )
+            identifier = instance_identifier_string(instance)
+            viewset.perform_destroy(instance)
+            return BulkMutationResultDTO(
+                deleted=1,
+                succeeded_identifiers=[identifier],
+            )
+    except (ValidationError, PermissionDenied, NotFound) as exc:
+        return bulk_row_error_from_exception(
+            index=index,
+            identifier=identifier_from_dto(dto, bulk_action.identifier_field),
+            exc=exc,
+        )
+
+    raise ValueError(f"Unsupported bulk action kind {bulk_action.kind!r}.")
+
+
+def require_bulk_input_dataclass(
+    *,
+    bulk_action: BulkActionSpec[Any],
+    create_input: type[CreateDTO] | None,
+) -> type[Any]:
+    """Return the request row dataclass used by one bulk action."""
+    if bulk_action.input_dataclass is not None:
+        return bulk_action.input_dataclass
+    if bulk_action.kind == "create" and create_input is not None:
+        return cast(type[Any], create_input)
+    raise TypeError(f"Bulk action {bulk_action.name!r} is missing input_dataclass.")
+
+
+def require_bulk_handler_dataclass(
+    *,
+    bulk_action: BulkActionSpec[Any],
+    fallback_dataclass: type[Any] | None,
+    action_name: str,
+) -> type[Any]:
+    """Return the handler DTO type used after projecting a bulk row DTO."""
+    if bulk_action.handler_dataclass is not None:
+        return bulk_action.handler_dataclass
+    if fallback_dataclass is not None:
+        return fallback_dataclass
+    raise TypeError(f"{action_name} requires a handler dataclass.")
+
+
+def instance_for_bulk_row(
+    *,
+    queryset: models.QuerySet[M],
+    bulk_action: BulkActionSpec[Any],
+    dto: Any,
+) -> M:
+    """Return the target model instance for one update, patch, or delete row."""
+    identifier_value = identifier_value_from_dto(dto, bulk_action.identifier_field)
+    if identifier_value is None:
+        raise ValidationError(
+            {
+                cast(str, bulk_action.identifier_field): [
+                    "This field is required for bulk row identity."
+                ]
+            }
+        )
+    lookup_field = bulk_action.lookup_field
+    if lookup_field is None:
+        raise TypeError(f"Bulk action {bulk_action.name!r} is missing lookup_field.")
+    lookup_kwargs = {lookup_field: identifier_value}
+    try:
+        return cast(M, queryset.get(**lookup_kwargs))
+    except queryset.model.DoesNotExist as exc:
+        raise NotFound("Target row was not found.") from exc
+
+
+def identifier_value_from_dto(dto: Any, identifier_field: str | None) -> object:
+    """Return the raw identifier value configured for one bulk row DTO."""
+    if identifier_field is None or not hasattr(dto, identifier_field):
+        return None
+    return getattr(dto, identifier_field)
+
+
+def identifier_from_dto(dto: Any, identifier_field: str | None) -> str | None:
+    """Return a string identifier for docs/results when a DTO carries one."""
+    identifier_value = identifier_value_from_dto(dto, identifier_field)
+    if identifier_value is None:
+        return None
+    return str(identifier_value)
+
+
+def identifier_from_raw_payload(payload: object) -> str | None:
+    """Best-effort identifier extraction for invalid bulk row payloads."""
+    if not isinstance(payload, dict):
+        return None
+    raw_identifier = payload.get("id")
+    if raw_identifier is None:
+        return None
+    return str(raw_identifier)
+
+
+def instance_identifier_string(instance: models.Model) -> str:
+    """Return the primary-key identifier recorded in structured bulk results."""
+    pk = instance.pk
+    return "" if pk is None else str(pk)
+
+
+def normalize_bulk_error_payload(payload: Any) -> list[BulkFieldErrorDTO]:
+    """Convert DRF validation payloads into a stable typed bulk error shape."""
+    if isinstance(payload, dict):
+        return [
+            BulkFieldErrorDTO(
+                field=str(key),
+                messages=[str(item) for item in ensure_error_list(value)],
+            )
+            for key, value in payload.items()
+        ]
+    return [
+        BulkFieldErrorDTO(
+            field="non_field_errors",
+            messages=[str(item) for item in ensure_error_list(payload)],
+        )
+    ]
+
+
+def ensure_error_list(value: Any) -> list[Any]:
+    """Return a list representation for DRF validation error values."""
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def bulk_row_error_from_exception(
+    *,
+    index: int,
+    identifier: str | None,
+    exc: ValidationError | PermissionDenied | NotFound,
+) -> BulkRowErrorDTO:
+    """Convert one DRF exception into a structured bulk row error DTO."""
+    detail = getattr(exc, "detail", None)
+    if detail is None:
+        detail = str(exc)
+    return BulkRowErrorDTO(
+        index=index,
+        identifier=identifier,
+        errors=normalize_bulk_error_payload(detail),
+    )
+
+
+def empty_bulk_result() -> BulkMutationResultDTO:
+    """Return an empty mutable-style bulk result dataclass."""
+    return BulkMutationResultDTO()
+
+
+def merge_bulk_success(
+    target: BulkMutationResultDTO,
+    source: BulkMutationResultDTO,
+) -> None:
+    """Accumulate one successful row result into a bulk result object."""
+    target.created += source.created
+    target.updated += source.updated
+    target.deleted += source.deleted
+    target.succeeded_identifiers.extend(source.succeeded_identifiers)
+
+
+def bulk_success_status_code(
+    bulk_action: BulkActionSpec[Any],
+    *,
+    allow_partial: bool = False,
+) -> int:
+    """Return the HTTP status code used by one successful bulk response."""
+    if allow_partial:
+        return status.HTTP_200_OK
+    if bulk_action.kind == "create":
+        return status.HTTP_201_CREATED
+    return status.HTTP_200_OK
+
+
+def bulk_result_response(
+    *,
+    result: BulkMutationResultDTO,
+    status_code: int,
+) -> Response:
+    """Return a structured bulk operation response."""
+    return Response(dataclass_instance_to_response_data(result), status=status_code)
 
 
 def build_field_subresource_method(

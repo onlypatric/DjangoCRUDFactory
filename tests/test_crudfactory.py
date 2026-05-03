@@ -48,6 +48,9 @@ from crudfactory import (
     GroupedCollectionSourceACL,
     avg_stat,
     annotated_field,
+    bulk_create_action,
+    bulk_delete_action,
+    bulk_patch_action,
     collection_action,
     choices,
     grouped_collection_action,
@@ -522,6 +525,24 @@ class WidgetBodyCollectionActionDTO:
     name: str
 
 
+@dataclass
+class WidgetBulkPatchDTO:
+    id: int
+    name: str | None = field(
+        default=None,
+        metadata={**regex(r"^[a-z]+$"), **length(min=2, max=12)},
+    )
+    count: int | None = field(
+        default=None,
+        metadata={**range_(min=0, max=10), **choices([1, 3, 8, 9])},
+    )
+
+
+@dataclass
+class WidgetBulkDeleteDTO:
+    id: int = field(metadata=range_(min=1, max=9999))
+
+
 class CustomPermission(BasePermission):
     pass
 
@@ -753,6 +774,32 @@ class CRUDFactoryTests(unittest.TestCase):
                     response_dataclass=WidgetQueryActionResponseDTO,
                     handler=widget_query_action_response,
                     methods=("get",),
+                ),
+            ),
+        }
+        config.update(overrides)
+        return CRUDFactory(**config)
+
+    def build_bulk_factory(self, **overrides: object) -> CRUDFactory:
+        config = {
+            "model": Widget,
+            "response_mapper": widget_to_response,
+            "create_input": WidgetCreateDTO,
+            "update_input": WidgetUpdateDTO,
+            "partial_update_input": WidgetPatchDTO,
+            "create_handler": self.create_widget,
+            "update_handler": self.update_widget,
+            "partial_update_handler": self.patch_widget,
+            "queryset": Widget.objects.order_by("id"),
+            "bulk_actions": (
+                bulk_create_action(transaction_mode="best-effort"),
+                bulk_patch_action(
+                    input_dataclass=WidgetBulkPatchDTO,
+                    transaction_mode="best-effort",
+                ),
+                bulk_delete_action(
+                    input_dataclass=WidgetBulkDeleteDTO,
+                    transaction_mode="best-effort",
                 ),
             ),
         }
@@ -1502,6 +1549,138 @@ class CRUDFactoryTests(unittest.TestCase):
                 response_dataclass=WidgetQueryActionResponseDTO,
                 handler=cast(Any, widget_query_action_response),
             )
+
+    def test_bulk_create_best_effort_returns_structured_result(self) -> None:
+        view = self.build_bulk_factory().get_viewset_class().as_view({"post": "bulk_create"})
+
+        response = view(
+            self.request_factory.post(
+                "/widgets/bulk-create/",
+                [
+                    {"name": "alpha", "count": 3},
+                    {"name": "beta", "count": 100},
+                ],
+                format="json",
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["created"], 1)
+        self.assertEqual(response.data["failed"], 1)
+        self.assertFalse(response.data["rolled_back"])
+        self.assertEqual(Widget.objects.count(), 1)
+
+    def test_bulk_create_atomic_rolls_back_all_rows(self) -> None:
+        view = self.build_bulk_factory(
+            bulk_actions=(bulk_create_action(transaction_mode="atomic"),)
+        ).get_viewset_class().as_view({"post": "bulk_create"})
+
+        response = view(
+            self.request_factory.post(
+                "/widgets/bulk-create/",
+                [
+                    {"name": "alpha", "count": 3},
+                    {"name": "beta", "count": 100},
+                ],
+                format="json",
+            )
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(response.data["rolled_back"])
+        self.assertEqual(response.data["created"], 0)
+        self.assertEqual(response.data["failed"], 1)
+        self.assertEqual(Widget.objects.count(), 0)
+
+    def test_bulk_patch_updates_many_rows(self) -> None:
+        first = Widget.objects.create(name="alpha", count=1)
+        second = Widget.objects.create(name="beta", count=3)
+        view = self.build_bulk_factory().get_viewset_class().as_view({"patch": "bulk_patch"})
+
+        response = view(
+            self.request_factory.patch(
+                "/widgets/bulk-patch/",
+                [
+                    {"id": first.pk, "count": 8},
+                    {"id": second.pk, "name": "gamma"},
+                ],
+                format="json",
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["updated"], 2)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.count, 8)
+        self.assertEqual(second.name, "gamma")
+
+    def test_bulk_delete_deletes_many_rows(self) -> None:
+        first = Widget.objects.create(name="alpha", count=1)
+        second = Widget.objects.create(name="beta", count=3)
+        view = self.build_bulk_factory().get_viewset_class().as_view({"delete": "bulk_delete"})
+
+        response = view(
+            self.request_factory.delete(
+                "/widgets/bulk-delete/",
+                [
+                    {"id": first.pk},
+                    {"id": second.pk},
+                ],
+                format="json",
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted"], 2)
+        self.assertFalse(Widget.objects.exists())
+
+    def test_bulk_patch_reports_acl_row_failures_in_best_effort_mode(self) -> None:
+        allowed = Widget.objects.create(name="allowed", count=1)
+        denied = Widget.objects.create(name="denied", count=3)
+        view = self.build_bulk_factory(
+            bulk_actions=(
+                bulk_patch_action(
+                    input_dataclass=WidgetBulkPatchDTO,
+                    transaction_mode="best-effort",
+                ),
+            ),
+            acl=ACLConfig(
+                backend=SelectiveACLBackend(),
+                actor_resolver=lambda request: "actor",
+                partial_update_action=ACLActionConfig(permission="app.widgets.patch"),
+                resource_ref_from_instance=lambda widget: cast(Widget, widget).name,
+            ),
+        ).get_viewset_class().as_view({"patch": "bulk_patch"})
+
+        response = view(
+            self.request_factory.patch(
+                "/widgets/bulk-patch/",
+                [
+                    {"id": allowed.pk, "count": 8},
+                    {"id": denied.pk, "count": 9},
+                ],
+                format="json",
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["updated"], 1)
+        self.assertEqual(response.data["failed"], 1)
+        allowed.refresh_from_db()
+        denied.refresh_from_db()
+        self.assertEqual(allowed.count, 8)
+        self.assertEqual(denied.count, 3)
+
+    def test_bulk_markdown_docs_include_row_and_result_contracts(self) -> None:
+        markdown = self.build_bulk_factory(route="widgets").render_markdown_docs(
+            title="Widget Factory",
+            base_path="/api",
+        )
+
+        self.assertIn("## Bulk Operations", markdown)
+        self.assertIn("### `bulk_create`", markdown)
+        self.assertIn("`BulkMutationResultDTO`", markdown)
 
     def test_grouped_action_requires_factory_acl_when_source_acl_is_used(self) -> None:
         with self.assertRaisesRegex(TypeError, "uses source_acl, but the factory does not define acl"):

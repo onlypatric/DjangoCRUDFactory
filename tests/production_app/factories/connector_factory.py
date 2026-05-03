@@ -11,6 +11,9 @@ from crudfactory import (
     ACLResourceRef,
     CRUDFactory,
     DjangoACLBackend,
+    bulk_create_action,
+    bulk_delete_action,
+    bulk_patch_action,
     crud_acl,
     detail_action,
     field_subresource,
@@ -68,6 +71,30 @@ class ConnectorPatchDTO:
     power_kw: Decimal | None = field(default=None, metadata=range_(min=0, max=500))
     current_a: int | None = field(default=None, metadata=range_(min=0, max=1000))
     voltage_v: int | None = field(default=None, metadata=range_(min=0, max=1000))
+
+
+@dataclass
+class ConnectorBulkPatchDTO:
+    id: int = field(metadata=range_(min=1, max=999999))
+    chargepoint_id: int | None = field(
+        default=None,
+        metadata={**model_field("chargepoint_id"), **range_(min=1)},
+    )
+    name: str | None = field(
+        default=None,
+        metadata={**regex(r"^[A-Za-z0-9 -]+$"), **length(min=2, max=80)},
+    )
+    connector_type: str | None = field(default=None, metadata=length(min=2, max=40))
+    status: str | None = field(default=None, metadata=length(min=2, max=20))
+    is_locked: bool | None = None
+    power_kw: Decimal | None = field(default=None, metadata=range_(min=0, max=500))
+    current_a: int | None = field(default=None, metadata=range_(min=0, max=1000))
+    voltage_v: int | None = field(default=None, metadata=range_(min=0, max=1000))
+
+
+@dataclass
+class ConnectorBulkDeleteDTO:
+    id: int = field(metadata=range_(min=1, max=999999))
 
 
 @dataclass
@@ -319,6 +346,17 @@ connector_factory = CRUDFactory(
             read_permission="app.connector.read",
             update_permission="app.connector.update",
         )
+    ],
+    bulk_actions=[
+        bulk_create_action(transaction_mode="best-effort"),
+        bulk_patch_action(
+            input_dataclass=ConnectorBulkPatchDTO,
+            transaction_mode="best-effort",
+        ),
+        bulk_delete_action(
+            input_dataclass=ConnectorBulkDeleteDTO,
+            transaction_mode="best-effort",
+        ),
     ],
     custom_actions=[
         detail_action(
