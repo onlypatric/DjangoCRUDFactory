@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Generic, Sequence, TypeVar, cast
+from typing import Callable, Generic, Literal, Sequence, TypeVar, cast
 
 from django.db import models
 
@@ -15,6 +15,10 @@ QueryDTO = TypeVar("QueryDTO")
 DetailActionHandler = Callable[[M, ActionInputDTO], ActionResponseDTO]
 CollectionActionHandler = Callable[
     [models.QuerySet[M], ActionInputDTO],
+    ActionResponseDTO,
+]
+QueryCollectionActionHandler = Callable[
+    [models.QuerySet[M], QueryDTO],
     ActionResponseDTO,
 ]
 GroupedCollectionActionHandler = Callable[
@@ -49,7 +53,9 @@ class CustomActionSpec(Generic[M]):
     name: str
     detail: bool
     methods: tuple[str, ...]
-    input_dataclass: type[object]
+    input_dataclass: type[object] | None
+    query_dataclass: type[object] | None
+    request_source: Literal["body", "query"]
     response_dataclass: type[object]
     handler: Callable[..., object]
     url_path: str | None
@@ -102,6 +108,8 @@ def detail_action(
         detail=True,
         methods=normalize_methods(methods),
         input_dataclass=cast(type[object], input_dataclass),
+        query_dataclass=None,
+        request_source="body",
         response_dataclass=cast(type[object], response_dataclass),
         handler=cast(Callable[..., object], handler),
         url_path=url_path,
@@ -117,21 +125,33 @@ def detail_action(
 def collection_action(
     *,
     name: str,
-    input_dataclass: type[ActionInputDTO],
+    input_dataclass: type[ActionInputDTO] | None = None,
+    query_dataclass: type[QueryDTO] | None = None,
     response_dataclass: type[ActionResponseDTO],
-    handler: CollectionActionHandler[M, ActionInputDTO, ActionResponseDTO],
+    handler: (
+        CollectionActionHandler[M, ActionInputDTO, ActionResponseDTO]
+        | QueryCollectionActionHandler[M, QueryDTO, ActionResponseDTO]
+    ),
     methods: tuple[str, ...] = ("post",),
     url_path: str | None = None,
     url_name: str | None = None,
     acl: ACLActionConfig | None = None,
-    acl_resource_ref_resolver: Callable[[ActionInputDTO], object] | None = None,
+    acl_resource_ref_resolver: Callable[[object], object] | None = None,
 ) -> CustomActionSpec[M]:
     """Return a typed collection action spec for a generated ViewSet."""
+    if (input_dataclass is None) == (query_dataclass is None):
+        msg = (
+            "collection_action requires exactly one of input_dataclass or "
+            "query_dataclass."
+        )
+        raise TypeError(msg)
     return CustomActionSpec(
         name=name,
         detail=False,
         methods=normalize_methods(methods),
-        input_dataclass=cast(type[object], input_dataclass),
+        input_dataclass=cast(type[object] | None, input_dataclass),
+        query_dataclass=cast(type[object] | None, query_dataclass),
+        request_source="query" if query_dataclass is not None else "body",
         response_dataclass=cast(type[object], response_dataclass),
         handler=cast(Callable[..., object], handler),
         url_path=url_path,

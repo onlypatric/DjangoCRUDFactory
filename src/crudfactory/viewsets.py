@@ -158,6 +158,7 @@ def build_crud_viewset_class(
         read_only=read_only,
         filter_specs=filter_specs,
         order_specs=order_specs,
+        custom_actions=custom_actions,
         custom_action_serializers=custom_action_serializers,
         custom_action_response_serializers=custom_action_response_serializers,
         grouped_actions=grouped_actions,
@@ -219,8 +220,8 @@ def build_custom_action_serializers(
     """Generate one request serializer per typed custom action."""
     return {
         custom_action.name: build_serializer_from_dataclass(
-            custom_action.input_dataclass,
-            name=f"{custom_action.input_dataclass.__name__}Serializer",
+            require_custom_action_dataclass(custom_action),
+            name=f"{require_custom_action_dataclass(custom_action).__name__}Serializer",
         )
         for custom_action in custom_actions
     }
@@ -589,10 +590,10 @@ def build_custom_action_method(
         *args: Any,
         **kwargs: Any,
     ) -> Response:
-        dto = validated_input_dataclass(
+        dto = validated_custom_action_dto(
+            custom_action=custom_action,
             serializer_class=serializer_class,
             request=request,
-            dataclass_type=custom_action.input_dataclass,
         )
         if custom_action.detail:
             instance = self.get_object()
@@ -627,6 +628,40 @@ def build_custom_action_method(
         url_path=custom_action.url_path,
         url_name=custom_action.url_name,
     )(custom_action_method)
+
+
+def require_custom_action_dataclass(custom_action: CustomActionSpec[M]) -> type[object]:
+    """Return the configured request dataclass for one custom action."""
+    if custom_action.request_source == "query":
+        if custom_action.query_dataclass is None:
+            msg = f"Custom action {custom_action.name!r} is missing query_dataclass."
+            raise TypeError(msg)
+        return custom_action.query_dataclass
+    if custom_action.input_dataclass is None:
+        msg = f"Custom action {custom_action.name!r} is missing input_dataclass."
+        raise TypeError(msg)
+    return custom_action.input_dataclass
+
+
+def validated_custom_action_dto(
+    *,
+    custom_action: CustomActionSpec[M],
+    serializer_class: type[serializers.Serializer],
+    request: Request,
+) -> object:
+    """Validate a custom action DTO from body or query params."""
+    dataclass_type = require_custom_action_dataclass(custom_action)
+    if custom_action.request_source == "query":
+        return validated_query_dataclass(
+            serializer_class=serializer_class,
+            request=request,
+            dataclass_type=dataclass_type,
+        )
+    return validated_input_dataclass(
+        serializer_class=serializer_class,
+        request=request,
+        dataclass_type=dataclass_type,
+    )
 
 
 def build_grouped_collection_action_method(

@@ -193,12 +193,60 @@ def validate_custom_actions(
             msg = f"Duplicate custom action name {custom_action.name!r}."
             raise ValueError(msg)
         seen_names.add(custom_action.name)
+        validate_custom_action_request_contract(custom_action)
+        validate_supported_response_dataclass_fields(custom_action.response_dataclass)
+        validate_callable(f"custom action {custom_action.name} handler", custom_action.handler)
+        validate_custom_action_methods(custom_action)
+
+
+def validate_custom_action_request_contract(
+    custom_action: CustomActionSpec[M],
+) -> None:
+    """Validate whether a custom action is body-driven or query-driven."""
+    if custom_action.request_source == "body":
+        if custom_action.input_dataclass is None or custom_action.query_dataclass is not None:
+            msg = (
+                f"Custom action {custom_action.name!r} must define input_dataclass "
+                "and no query_dataclass when request_source='body'."
+            )
+            raise TypeError(msg)
         validate_input_dataclass(
             f"custom action {custom_action.name} input_dataclass",
             custom_action.input_dataclass,
         )
-        validate_supported_response_dataclass_fields(custom_action.response_dataclass)
-        validate_callable(f"custom action {custom_action.name} handler", custom_action.handler)
+        return
+    if custom_action.request_source == "query":
+        if custom_action.input_dataclass is not None or custom_action.query_dataclass is None:
+            msg = (
+                f"Custom action {custom_action.name!r} must define query_dataclass "
+                "and no input_dataclass when request_source='query'."
+            )
+            raise TypeError(msg)
+        validate_input_dataclass(
+            f"custom action {custom_action.name} query_dataclass",
+            custom_action.query_dataclass,
+        )
+        return
+    msg = f"Unsupported request_source {custom_action.request_source!r}."
+    raise ValueError(msg)
+
+
+def validate_custom_action_methods(custom_action: CustomActionSpec[M]) -> None:
+    """Keep query-driven collection actions within the intended GET-only surface."""
+    if custom_action.request_source != "query":
+        return
+    if custom_action.detail:
+        msg = (
+            f"Query-driven custom action {custom_action.name!r} must be a "
+            "collection action."
+        )
+        raise ValueError(msg)
+    if tuple(custom_action.methods) != ("get",):
+        msg = (
+            f"Query-driven custom action {custom_action.name!r} only supports "
+            "methods=('get',) in v1."
+        )
+        raise ValueError(msg)
 
 
 def validate_grouped_actions(

@@ -600,6 +600,37 @@ class EVInfrastructureCRUDIntegrationTests(TestCase):
             },
         )
 
+    def test_inventory_item_query_collection_action_returns_typed_search_response(self) -> None:
+        first = self.create_inventory_item(name="Boiler Sensor")
+        first.quantity = 3
+        first.save(update_fields=["quantity"])
+        second = self.create_inventory_item(name="Boiler Alarm")
+        second.quantity = 8
+        second.save(update_fields=["quantity"])
+        StatusReading.objects.create(item=first, state="offline", duration=2)
+        StatusReading.objects.create(item=second, state="online", duration=7)
+
+        response = self.client.get(
+            "/api/inventory-items/search/?name=boiler&min_quantity=5",
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data,
+            {
+                "total": 1,
+                "items": [
+                    {
+                        "id": second.pk,
+                        "name": "Boiler Alarm",
+                        "quantity": 8,
+                        "latest_state": "online",
+                    }
+                ],
+            },
+        )
+
 
 class ConnectorACLIntegrationTests(TestCase):
     client: APIClient
@@ -1016,3 +1047,14 @@ class FactoryDocsServerTests(TestCase):
         self.assertIn("## Field Subresource Endpoints", body)
         self.assertIn("`GET, PATCH /api/connectors/{pk}/metadata/`", body)
         self.assertIn("ConnectorActionInputDTO", body)
+
+    def test_inventory_factory_doc_mentions_query_collection_action(self) -> None:
+        client = APIClient()
+
+        response = client.get("/docs/factories/inventory-item-readonly/")
+
+        body = response.content.decode("utf-8")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("### `search`", body)
+        self.assertIn("- Query DTO:", body)
+        self.assertIn("InventorySearchQueryDTO", body)

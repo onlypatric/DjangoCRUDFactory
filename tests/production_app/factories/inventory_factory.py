@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Sequence
 
+from django.db import models
 from django.db.models import Exists, OuterRef, Subquery
 
-from crudfactory import CRUDFactory, annotated_field, filterable, model_field, orderable
+from crudfactory import (
+    CRUDFactory,
+    annotated_field,
+    collection_action,
+    filterable,
+    model_field,
+    orderable,
+)
 
 from ..models import InventoryItem, StatusReading, StockLevel
 
@@ -43,6 +52,58 @@ class InventoryItemResponseDTO:
     )
 
 
+@dataclass(frozen=True)
+class InventorySearchQueryDTO:
+    name: str | None = None
+    min_quantity: int | None = None
+
+
+@dataclass(frozen=True)
+class InventorySearchItemDTO:
+    id: int
+    name: str
+    quantity: int
+    latest_state: str | None
+
+
+@dataclass(frozen=True)
+class InventorySearchResponseDTO:
+    total: int
+    items: list[InventorySearchItemDTO]
+
+
+def inventory_search(
+    queryset: models.QuerySet[InventoryItem] | Sequence[InventoryItem],
+    query: InventorySearchQueryDTO,
+) -> InventorySearchResponseDTO:
+    if isinstance(queryset, models.QuerySet):
+        filtered_queryset = queryset
+    else:
+        item_ids = [item.pk for item in queryset if item.pk is not None]
+        filtered_queryset = INVENTORY_ITEM_QUERYSET.filter(pk__in=item_ids)
+    if query.name is not None:
+        filtered_queryset = filtered_queryset.filter(name__icontains=query.name)
+    if query.min_quantity is not None:
+        filtered_queryset = filtered_queryset.filter(quantity__gte=query.min_quantity)
+    items = list(
+        filtered_queryset.annotate(
+            latest_state=Subquery(LATEST_STATUS_READING.values("state")[:1])
+        ).order_by("id")
+    )
+    return InventorySearchResponseDTO(
+        total=len(items),
+        items=[
+            InventorySearchItemDTO(
+                id=item.pk,
+                name=item.name,
+                quantity=item.quantity,
+                latest_state=getattr(item, "latest_state", None),
+            )
+            for item in items
+        ],
+    )
+
+
 inventory_item_factory = CRUDFactory.read_only(
     model=InventoryItem,
     response_dataclass=InventoryItemResponseDTO,
@@ -50,4 +111,13 @@ inventory_item_factory = CRUDFactory.read_only(
     app_name="inventory",
     route="inventory-items",
     basename="inventory-item",
+    custom_actions=(
+        collection_action(
+            name="search",
+            query_dataclass=InventorySearchQueryDTO,
+            response_dataclass=InventorySearchResponseDTO,
+            handler=inventory_search,
+            methods=("get",),
+        ),
+    ),
 )

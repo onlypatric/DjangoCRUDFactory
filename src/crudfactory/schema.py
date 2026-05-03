@@ -11,6 +11,7 @@ from django.db import models
 from rest_framework import serializers
 from rest_framework.viewsets import ModelViewSet
 
+from .actions import CustomActionSpec
 from .dataclass_serializers import (
     build_serializer_fields,
     ensure_dataclass_type,
@@ -188,6 +189,7 @@ def apply_schema_metadata(
     read_only: bool,
     filter_specs: tuple[FilterSpec, ...],
     order_specs: tuple[OrderSpec, ...],
+    custom_actions: tuple[CustomActionSpec[Any], ...] = (),
     custom_action_serializers: dict[str, type[serializers.Serializer]] | None = None,
     custom_action_response_serializers: dict[str, type[serializers.Serializer]] | None = None,
     grouped_actions: tuple[Any, ...] = (),
@@ -217,6 +219,7 @@ def apply_schema_metadata(
         read_only=read_only,
         filter_specs=filter_specs,
         order_specs=order_specs,
+        custom_actions=custom_actions,
         custom_action_serializers=custom_action_serializers or {},
         custom_action_response_serializers=custom_action_response_serializers or {},
         grouped_actions=grouped_actions,
@@ -254,6 +257,7 @@ def apply_drf_spectacular_metadata(
     read_only: bool,
     filter_specs: tuple[FilterSpec, ...],
     order_specs: tuple[OrderSpec, ...],
+    custom_actions: tuple[CustomActionSpec[Any], ...],
     custom_action_serializers: dict[str, type[serializers.Serializer]],
     custom_action_response_serializers: dict[str, type[serializers.Serializer]],
     grouped_actions: tuple[Any, ...],
@@ -287,8 +291,10 @@ def apply_drf_spectacular_metadata(
     if read_only:
         decorate_custom_actions(
             viewset_class=viewset_class,
+            custom_actions=custom_actions,
             custom_action_serializers=custom_action_serializers,
             custom_action_response_serializers=custom_action_response_serializers,
+            OpenApiParameter=OpenApiParameter,
             extend_schema=extend_schema,
         )
         decorate_grouped_actions(
@@ -320,8 +326,10 @@ def apply_drf_spectacular_metadata(
     )(viewset_class.partial_update)
     decorate_custom_actions(
         viewset_class=viewset_class,
+        custom_actions=custom_actions,
         custom_action_serializers=custom_action_serializers,
         custom_action_response_serializers=custom_action_response_serializers,
+        OpenApiParameter=OpenApiParameter,
         extend_schema=extend_schema,
     )
     decorate_grouped_actions(
@@ -342,14 +350,35 @@ def apply_drf_spectacular_metadata(
 def decorate_custom_actions(
     *,
     viewset_class: type[ModelViewSet],
+    custom_actions: tuple[CustomActionSpec[Any], ...],
     custom_action_serializers: dict[str, type[serializers.Serializer]],
     custom_action_response_serializers: dict[str, type[serializers.Serializer]],
+    OpenApiParameter: type[Any],
     extend_schema: Any,
 ) -> None:
     """Decorate typed custom actions with request/response schemas."""
+    custom_actions_by_name = {
+        custom_action.name: custom_action for custom_action in custom_actions
+    }
     for action_name, request_serializer in custom_action_serializers.items():
+        custom_action = custom_actions_by_name[action_name]
         response_serializer = custom_action_response_serializers[action_name]
         action_method = getattr(viewset_class, action_name)
+        if custom_action.request_source == "query":
+            query_dataclass = custom_action.query_dataclass
+            if query_dataclass is None:
+                msg = f"Custom action {custom_action.name!r} is missing query_dataclass."
+                raise TypeError(msg)
+            decorated_method = extend_schema(
+                request=None,
+                parameters=dataclass_query_parameters_for_schema(
+                    query_dataclass,
+                    OpenApiParameter=OpenApiParameter,
+                ),
+                responses=response_serializer,
+            )(action_method)
+            setattr(viewset_class, action_name, decorated_method)
+            continue
         setattr(
             viewset_class,
             action_name,

@@ -48,6 +48,7 @@ from crudfactory import (
     GroupedCollectionSourceACL,
     avg_stat,
     annotated_field,
+    collection_action,
     choices,
     grouped_collection_action,
     count_stat,
@@ -498,6 +499,29 @@ class WidgetGroupResponseDTO:
     buckets: list[WidgetGroupBucketDTO]
 
 
+@dataclass
+class WidgetQueryActionDTO:
+    name: str | None = None
+    min_count: int | None = None
+
+
+@dataclass
+class WidgetQueryActionItemDTO:
+    id: int
+    name: str
+
+
+@dataclass
+class WidgetQueryActionResponseDTO:
+    total: int
+    items: list[WidgetQueryActionItemDTO]
+
+
+@dataclass
+class WidgetBodyCollectionActionDTO:
+    name: str
+
+
 class CustomPermission(BasePermission):
     pass
 
@@ -586,6 +610,36 @@ def widget_group_response(
                 ],
             )
         ]
+    )
+
+
+def widget_query_action_response(
+    widgets: models.QuerySet[Widget],
+    query: WidgetQueryActionDTO,
+) -> WidgetQueryActionResponseDTO:
+    filtered = widgets
+    if query.name is not None:
+        filtered = filtered.filter(name__icontains=query.name)
+    if query.min_count is not None:
+        filtered = filtered.filter(count__gte=query.min_count)
+    items = list(filtered.order_by("id"))
+    return WidgetQueryActionResponseDTO(
+        total=len(items),
+        items=[
+            WidgetQueryActionItemDTO(id=cast(int, widget.pk), name=widget.name)
+            for widget in items
+        ],
+    )
+
+
+def widget_body_collection_action_response(
+    widgets: models.QuerySet[Widget],
+    dto: WidgetBodyCollectionActionDTO,
+) -> WidgetQueryActionResponseDTO:
+    _ = widgets
+    return WidgetQueryActionResponseDTO(
+        total=1,
+        items=[WidgetQueryActionItemDTO(id=0, name=dto.name)],
     )
 
 
@@ -681,6 +735,25 @@ class CRUDFactoryTests(unittest.TestCase):
             "acl": ACLConfig(
                 backend=SelectiveACLBackend(),
                 actor_resolver=lambda request: "actor",
+            ),
+        }
+        config.update(overrides)
+        return CRUDFactory(**config)
+
+    def build_query_action_factory(self, **overrides: object) -> CRUDFactory:
+        config = {
+            "model": Widget,
+            "response_mapper": widget_to_response,
+            "queryset": Widget.objects.order_by("id"),
+            "read_only": True,
+            "custom_actions": (
+                collection_action(
+                    name="search",
+                    query_dataclass=WidgetQueryActionDTO,
+                    response_dataclass=WidgetQueryActionResponseDTO,
+                    handler=widget_query_action_response,
+                    methods=("get",),
+                ),
             ),
         }
         config.update(overrides)
@@ -1371,6 +1444,64 @@ class CRUDFactoryTests(unittest.TestCase):
         self.assertIn("`GET /api/widgets/grouped/`", markdown)
         self.assertIn("`WidgetGroupQueryDTO`", markdown)
         self.assertIn("`WidgetGroupResponseDTO`", markdown)
+
+    def test_query_collection_action_reads_query_params_and_ignores_body(self) -> None:
+        Widget.objects.create(name="alpha", count=1)
+        Widget.objects.create(name="alphabet", count=8)
+        Widget.objects.create(name="beta", count=9)
+        viewset_class = self.build_query_action_factory().get_viewset_class()
+
+        request = self.request_factory.generic(
+            "GET",
+            "/widgets/search/?name=alpha&min_count=5",
+            data='{"name":"beta","min_count":100}',
+            content_type="application/json",
+        )
+        response = viewset_class.as_view({"get": "search"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data,
+            {
+                "total": 1,
+                "items": [{"id": ANY, "name": "alphabet"}],
+            },
+        )
+
+    def test_query_collection_action_markdown_docs_include_query_contract(self) -> None:
+        markdown = self.build_query_action_factory(route="widgets").render_markdown_docs(
+            title="Widget Factory",
+            base_path="/api",
+        )
+
+        self.assertIn("### `search`", markdown)
+        self.assertIn("- Query DTO:", markdown)
+        self.assertIn("`WidgetQueryActionDTO`", markdown)
+        self.assertIn("`WidgetQueryActionResponseDTO`", markdown)
+
+    def test_query_collection_action_rejects_non_get_methods(self) -> None:
+        with self.assertRaisesRegex(ValueError, "only supports methods=\\('get',\\)"):
+            self.build_query_action_factory(
+                custom_actions=(
+                    collection_action(
+                        name="search",
+                        query_dataclass=WidgetQueryActionDTO,
+                        response_dataclass=WidgetQueryActionResponseDTO,
+                        handler=widget_query_action_response,
+                        methods=("post",),
+                    ),
+                )
+            )
+
+    def test_collection_action_requires_exactly_one_request_contract(self) -> None:
+        with self.assertRaisesRegex(TypeError, "exactly one of input_dataclass or query_dataclass"):
+            collection_action(
+                name="broken",
+                input_dataclass=WidgetCreateDTO,
+                query_dataclass=WidgetQueryActionDTO,
+                response_dataclass=WidgetQueryActionResponseDTO,
+                handler=cast(Any, widget_query_action_response),
+            )
 
     def test_grouped_action_requires_factory_acl_when_source_acl_is_used(self) -> None:
         with self.assertRaisesRegex(TypeError, "uses source_acl, but the factory does not define acl"):

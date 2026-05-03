@@ -289,8 +289,18 @@ def custom_action_lines(factory: CRUDFactory[Any, Any, Any, Any, Any]) -> list[s
         lines.append(
             f"- Methods: `{', '.join(method.upper() for method in custom_action.methods)}`"
         )
-        lines.append("- Input DTO:")
-        lines.extend(indent_lines(dataclass_section_lines(custom_action.input_dataclass)))
+        if getattr(custom_action, "request_source", "body") == "query":
+            lines.append("- Query DTO:")
+            if custom_action.query_dataclass is not None:
+                lines.extend(
+                    indent_lines(dataclass_section_lines(custom_action.query_dataclass))
+                )
+        else:
+            lines.append("- Input DTO:")
+            if custom_action.input_dataclass is not None:
+                lines.extend(
+                    indent_lines(dataclass_section_lines(custom_action.input_dataclass))
+                )
         lines.append("- Response DTO:")
         lines.extend(
             indent_lines(dataclass_section_lines(custom_action.response_dataclass))
