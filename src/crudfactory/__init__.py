@@ -44,6 +44,7 @@ from .list_queries import (
     query_range,
     query_search,
 )
+from .metadata import compose_meta
 from .ordering import orderable
 from .pagination import page_number_pagination
 from .parent_scopes import ParentScopeSpec, parent_scope
@@ -90,6 +91,7 @@ __all__ = [
     "bulk_update_action",
     "choices",
     "collection_action",
+    "compose_meta",
     "count_stat",
     "crud_acl",
     "detail_action",

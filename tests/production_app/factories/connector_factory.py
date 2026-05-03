@@ -14,6 +14,7 @@ from crudfactory import (
     bulk_create_action,
     bulk_delete_action,
     bulk_patch_action,
+    compose_meta,
     crud_acl,
     detail_action,
     field_subresource,
@@ -34,8 +35,8 @@ CONNECTOR_QUERYSET = Connector.objects.select_related("chargepoint__location").o
 
 @dataclass
 class ConnectorCreateDTO:
-    chargepoint_id: int = field(metadata={**model_field("chargepoint_id"), **range_(min=1)})
-    name: str = field(metadata={**regex(r"^[A-Za-z0-9 -]+$"), **length(min=2, max=80)})
+    chargepoint_id: int = field(metadata=compose_meta(model_field("chargepoint_id"), range_(min=1)))
+    name: str = field(metadata=compose_meta(regex(r"^[A-Za-z0-9 -]+$"), length(min=2, max=80)))
     connector_type: str = field(metadata=length(min=2, max=40))
     status: str = field(metadata=length(min=2, max=20))
     power_kw: Decimal = field(metadata=range_(min=0, max=500))
@@ -46,8 +47,8 @@ class ConnectorCreateDTO:
 
 @dataclass
 class ConnectorUpdateDTO:
-    chargepoint_id: int = field(metadata={**model_field("chargepoint_id"), **range_(min=1)})
-    name: str = field(metadata={**regex(r"^[A-Za-z0-9 -]+$"), **length(min=2, max=80)})
+    chargepoint_id: int = field(metadata=compose_meta(model_field("chargepoint_id"), range_(min=1)))
+    name: str = field(metadata=compose_meta(regex(r"^[A-Za-z0-9 -]+$"), length(min=2, max=80)))
     connector_type: str = field(metadata=length(min=2, max=40))
     status: str = field(metadata=length(min=2, max=20))
     power_kw: Decimal = field(metadata=range_(min=0, max=500))
@@ -60,11 +61,11 @@ class ConnectorUpdateDTO:
 class ConnectorPatchDTO:
     chargepoint_id: int | None = field(
         default=None,
-        metadata={**model_field("chargepoint_id"), **range_(min=1)},
+        metadata=compose_meta(model_field("chargepoint_id"), range_(min=1)),
     )
     name: str | None = field(
         default=None,
-        metadata={**regex(r"^[A-Za-z0-9 -]+$"), **length(min=2, max=80)},
+        metadata=compose_meta(regex(r"^[A-Za-z0-9 -]+$"), length(min=2, max=80)),
     )
     connector_type: str | None = field(default=None, metadata=length(min=2, max=40))
     status: str | None = field(default=None, metadata=length(min=2, max=20))
@@ -79,11 +80,11 @@ class ConnectorBulkPatchDTO:
     id: int = field(metadata=range_(min=1, max=999999))
     chargepoint_id: int | None = field(
         default=None,
-        metadata={**model_field("chargepoint_id"), **range_(min=1)},
+        metadata=compose_meta(model_field("chargepoint_id"), range_(min=1)),
     )
     name: str | None = field(
         default=None,
-        metadata={**regex(r"^[A-Za-z0-9 -]+$"), **length(min=2, max=80)},
+        metadata=compose_meta(regex(r"^[A-Za-z0-9 -]+$"), length(min=2, max=80)),
     )
     connector_type: str | None = field(default=None, metadata=length(min=2, max=40))
     status: str | None = field(default=None, metadata=length(min=2, max=20))
@@ -101,19 +102,31 @@ class ConnectorBulkDeleteDTO:
 @dataclass
 class ConnectorResponseDTO:
     id: int = field(metadata=model_field("pk"))
-    chargepoint_id: int = field(metadata={**filterable(lookups=("exact",)), **orderable()})
+    chargepoint_id: int = field(
+        metadata=compose_meta(filterable(lookups=("exact",)), orderable())
+    )
     chargepoint_name: str = field(
-        metadata={**model_field("chargepoint__name"), **filterable("chargepoint__name", lookups=("exact", "icontains")), **orderable("chargepoint__name")}
+        metadata=compose_meta(
+            model_field("chargepoint__name"),
+            filterable("chargepoint__name", lookups=("exact", "icontains")),
+            orderable("chargepoint__name"),
+        )
     )
     location_id: int = field(metadata=model_field("chargepoint__location_id"))
     location_name: str = field(
-        metadata={**model_field("chargepoint__location__name"), **filterable("chargepoint__location__name", lookups=("exact", "icontains")), **orderable("chargepoint__location__name")}
+        metadata=compose_meta(
+            model_field("chargepoint__location__name"),
+            filterable("chargepoint__location__name", lookups=("exact", "icontains")),
+            orderable("chargepoint__location__name"),
+        )
     )
     name: str = field(
-        metadata={**filterable(lookups=("exact", "icontains")), **orderable()}
+        metadata=compose_meta(filterable(lookups=("exact", "icontains")), orderable())
     )
     connector_type: str
-    status: str = field(metadata={**filterable(lookups=("exact",)), **orderable()})
+    status: str = field(
+        metadata=compose_meta(filterable(lookups=("exact",)), orderable())
+    )
     is_locked: bool
     power_kw: Decimal = field(metadata=orderable())
     current_a: int

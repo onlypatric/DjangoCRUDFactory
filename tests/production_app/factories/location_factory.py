@@ -12,6 +12,7 @@ from ..models import Chargepoint
 from crudfactory import (
     CRUDFactory,
     archive_lifecycle,
+    compose_meta,
     count_stat,
     enum_summary,
     field_subresource,
@@ -33,11 +34,11 @@ V3_LOCATION_QUERYSET = Location.objects.filter(active=True).order_by("name", "id
 
 @dataclass
 class LocationCreateDTO:
-    name: str = field(metadata={**regex(r"^[A-Za-z0-9 -]+$"), **length(min=3, max=120)})
-    city: str = field(metadata={**regex(r"^[A-Za-z -]+$"), **length(min=2, max=80)})
+    name: str = field(metadata=compose_meta(regex(r"^[A-Za-z0-9 -]+$"), length(min=3, max=120)))
+    city: str = field(metadata=compose_meta(regex(r"^[A-Za-z -]+$"), length(min=2, max=80)))
     address: str = field(metadata=length(min=5, max=160))
     postal_code: str = field(metadata=length(min=3, max=20))
-    country: str = field(metadata={**regex(r"^[A-Za-z ]+$"), **length(min=2, max=40)})
+    country: str = field(metadata=compose_meta(regex(r"^[A-Za-z ]+$"), length(min=2, max=40)))
     description: str = field(default="", metadata=length(max=160))
     province: str = field(default="", metadata=length(max=8))
     network_name: str = field(default="", metadata=length(max=120))
@@ -45,11 +46,11 @@ class LocationCreateDTO:
 
 @dataclass
 class LocationUpdateDTO:
-    name: str = field(metadata={**regex(r"^[A-Za-z0-9 -]+$"), **length(min=3, max=120)})
-    city: str = field(metadata={**regex(r"^[A-Za-z -]+$"), **length(min=2, max=80)})
+    name: str = field(metadata=compose_meta(regex(r"^[A-Za-z0-9 -]+$"), length(min=3, max=120)))
+    city: str = field(metadata=compose_meta(regex(r"^[A-Za-z -]+$"), length(min=2, max=80)))
     address: str = field(metadata=length(min=5, max=160))
     postal_code: str = field(metadata=length(min=3, max=20))
-    country: str = field(metadata={**regex(r"^[A-Za-z ]+$"), **length(min=2, max=40)})
+    country: str = field(metadata=compose_meta(regex(r"^[A-Za-z ]+$"), length(min=2, max=40)))
     description: str = field(default="", metadata=length(max=160))
     province: str = field(default="", metadata=length(max=8))
     network_name: str = field(default="", metadata=length(max=120))
@@ -59,17 +60,17 @@ class LocationUpdateDTO:
 class LocationPatchDTO:
     name: str | None = field(
         default=None,
-        metadata={**regex(r"^[A-Za-z0-9 -]+$"), **length(min=3, max=120)},
+        metadata=compose_meta(regex(r"^[A-Za-z0-9 -]+$"), length(min=3, max=120)),
     )
     city: str | None = field(
         default=None,
-        metadata={**regex(r"^[A-Za-z -]+$"), **length(min=2, max=80)},
+        metadata=compose_meta(regex(r"^[A-Za-z -]+$"), length(min=2, max=80)),
     )
     address: str | None = field(default=None, metadata=length(min=5, max=160))
     postal_code: str | None = field(default=None, metadata=length(min=3, max=20))
     country: str | None = field(
         default=None,
-        metadata={**regex(r"^[A-Za-z ]+$"), **length(min=2, max=40)},
+        metadata=compose_meta(regex(r"^[A-Za-z ]+$"), length(min=2, max=40)),
     )
     description: str | None = field(default=None, metadata=length(max=160))
     province: str | None = field(default=None, metadata=length(max=8))
@@ -115,10 +116,10 @@ class LocationCapacityStatsDTO:
 class LocationResponseDTO:
     id: int = field(metadata=model_field("pk"))
     name: str = field(
-        metadata={**filterable(lookups=("exact", "icontains")), **orderable()}
+        metadata=compose_meta(filterable(lookups=("exact", "icontains")), orderable())
     )
     city: str = field(
-        metadata={**filterable(lookups=("exact", "icontains")), **orderable()}
+        metadata=compose_meta(filterable(lookups=("exact", "icontains")), orderable())
     )
     address: str
     postal_code: str
@@ -209,20 +210,24 @@ class V3LocationChargepointStatsResponse:
 class V3LocationSummaryResponse:
     id: int = field(metadata=model_field("pk"))
     name: str | None = field(
-        metadata={**filterable(lookups=("exact", "icontains")), **orderable()}
+        metadata=compose_meta(filterable(lookups=("exact", "icontains")), orderable())
     )
     description: str | None = field(
         metadata=filterable(lookups=("exact", "icontains"))
     )
     charge_network: str | None = field(
-        metadata={**model_field("network_name"), **filterable("network_name", lookups=("exact", "icontains")), **orderable("network_name")}
+        metadata=compose_meta(
+            model_field("network_name"),
+            filterable("network_name", lookups=("exact", "icontains")),
+            orderable("network_name"),
+        )
     )
-    active: bool = field(metadata={**filterable(), **orderable()})
+    active: bool = field(metadata=compose_meta(filterable(), orderable()))
     city: str | None = field(
-        metadata={**filterable(lookups=("exact", "icontains")), **orderable()}
+        metadata=compose_meta(filterable(lookups=("exact", "icontains")), orderable())
     )
     province: str | None = field(
-        metadata={**filterable(lookups=("exact", "icontains")), **orderable()}
+        metadata=compose_meta(filterable(lookups=("exact", "icontains")), orderable())
     )
     location: V3LocationAddressResponse = field(
         default_factory=lambda: V3LocationAddressResponse(None, None, None, None)

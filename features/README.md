@@ -10,8 +10,8 @@ non-auth flows.
 ## Progress Summary
 
 - Total tracked feature requests: `15`
-- Implemented so far: `13`
-- Still planned: `2`
+- Implemented so far: `14`
+- Still planned: `1`
 
 Implemented so far:
 
@@ -28,6 +28,7 @@ Implemented so far:
 11. built-in ACL presets
 12. advanced query DTOs for normal list endpoints
 13. soft delete and restore lifecycles
+14. metadata composition helpers
 
 ## Status Overview
 
@@ -46,7 +47,7 @@ Implemented so far:
 | Enum histogram / grouped stats helpers | `2026-04-30-enum-histogram-stats.md` | `implemented` | `enum_summary(...)` now generates count-stat response blocks from enum values while staying inside the normal stats pipeline. |
 | Built-in scoped ACL presets | `2026-04-30-built-in-acl-presets.md` | `implemented` | `scoped_read_acl(...)`, `scoped_read_write_acl(...)`, `global_read_acl(...)`, and `global_read_write_acl(...)` now cover the common permission shapes without hand-built `ACLConfig(...)` blocks. |
 | Soft delete / restore lifecycles | `2026-04-30-soft-delete-and-restore.md` | `implemented` | `lifecycle=...` now lets `DELETE` archive rows, hide archived records by default, optionally expose `include_archived`, and generate a restore action. |
-| Metadata composition helpers | `2026-04-30-metadata-composition-helpers.md` | `planned` | Improves DTO readability and reduces syntax noise. |
+| Metadata composition helpers | `2026-04-30-metadata-composition-helpers.md` | `implemented` | `compose_meta(...)` now merges metadata fragments predictably and fails fast on duplicate keys, making larger DTOs easier to read. |
 | Queryset plans from response contracts | `2026-04-30-queryset-plans-from-response-contracts.md` | `planned` | Ergonomics and N+1 safety improvement. |
 
 ## Recommended Order
@@ -54,8 +55,6 @@ Implemented so far:
 1. `2026-04-30-queryset-plans-from-response-contracts.md`
     Reason: improves ergonomics and performance, but is safer after more of the
     response-side abstractions are settled.
-2. `2026-04-30-metadata-composition-helpers.md`
-    Reason: useful DX cleanup, but not a capability blocker.
 
 ## Relationship Notes
 

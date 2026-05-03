@@ -54,6 +54,7 @@ from crudfactory import (
     bulk_patch_action,
     collection_action,
     choices,
+    compose_meta,
     grouped_collection_action,
     count_stat,
     enum_summary,
@@ -296,6 +297,27 @@ class ACLPresetTests(SimpleTestCase):
             acl.destroy_action,
             ACLActionConfig(permission="app.widgets.delete", mode="global"),
         )
+
+
+class MetadataCompositionTests(SimpleTestCase):
+    def test_compose_meta_merges_distinct_fragments(self) -> None:
+        metadata = compose_meta(
+            model_field("name"),
+            filterable(lookups=("exact", "icontains")),
+            orderable(),
+        )
+
+        self.assertIn("crudfactory_model_field", metadata)
+        self.assertIn("crudfactory_filter", metadata)
+        self.assertIn("crudfactory_order", metadata)
+
+    def test_compose_meta_rejects_duplicate_metadata_keys(self) -> None:
+        with self.assertRaisesRegex(ValueError, "duplicate metadata key"):
+            compose_meta(filterable(), filterable("name"))
+
+    def test_compose_meta_rejects_non_mapping_fragments(self) -> None:
+        with self.assertRaisesRegex(TypeError, "expects metadata mappings"):
+            compose_meta(cast(Any, "not-a-mapping"))
 
 
 @dataclass
