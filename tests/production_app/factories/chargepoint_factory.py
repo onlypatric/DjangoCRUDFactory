@@ -8,6 +8,7 @@ from django.db import models
 
 from crudfactory import (
     CRUDFactory,
+    field_subresource,
     filterable,
     length,
     model_field,
@@ -225,6 +226,12 @@ chargepoint_factory = CRUDFactory(
     create_input=ChargepointCreateDTO,
     update_input=ChargepointUpdateDTO,
     partial_update_input=ChargepointPatchDTO,
+    field_subresources=[
+        field_subresource(
+            field_name="metadata",
+            patch_mode="merge",
+        )
+    ],
     nested_writes=[
         nested_relation(
             field_name="connectors",

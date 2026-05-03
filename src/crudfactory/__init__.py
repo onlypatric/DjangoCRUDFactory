@@ -11,6 +11,7 @@ from .actions import (
     grouped_collection_action,
 )
 from .factory import CRUDFactory
+from .field_subresources import FieldSubresourceSpec, field_subresource
 from ._nested_writes import NestedWriteSpec, nested_relation
 from .filters import filterable
 from .ordering import orderable
@@ -39,6 +40,7 @@ __all__ = [
     "ACLPermissionSeed",
     "ACLResourceRef",
     "ACLResourceSeed",
+    "FieldSubresourceSpec",
     "GroupedCollectionSourceACL",
     "NestedWriteSpec",
     "avg_stat",
@@ -50,6 +52,7 @@ __all__ = [
     "DjangoACLBackend",
     "DjangoACLService",
     "filterable",
+    "field_subresource",
     "grouped_collection_action",
     "length",
     "max_stat",

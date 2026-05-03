@@ -13,6 +13,7 @@ from ._simple_writes import (
     MODEL_WRITE_TRANSFORM_METADATA_KEY,
 )
 from .filters import FILTER_METADATA_KEY, FilterDeclaration
+from .field_subresources import field_subresource_payload_label
 from .ordering import ORDERING_QUERY_PARAM, ORDER_METADATA_KEY
 from .source_queries import SOURCE_FILTER_METADATA_KEY, SOURCE_ORDER_METADATA_KEY
 from .stats import STAT_METADATA_KEY, AggregateStatDeclaration
@@ -58,6 +59,10 @@ def render_factory_markdown(
     lines.append("## Response DTO")
     lines.append("")
     lines.extend(dataclass_section_lines(response_dataclass))
+    lines.append("")
+    lines.append("## Field Subresource Endpoints")
+    lines.append("")
+    lines.extend(field_subresource_lines(factory, base_path=base_path))
     lines.append("")
     lines.append("## Error Responses")
     lines.append("")
@@ -124,6 +129,12 @@ def endpoint_lines(
         action_path = f"{route_path}{grouped_action.url_path or grouped_action.name}/"
         methods = ", ".join(method.upper() for method in grouped_action.methods)
         lines.append(f"- `{methods} {action_path}`: grouped {grouped_action.name}")
+    for field_subresource in getattr(factory, "field_subresources", ()):
+        action_path = (
+            f"{detail_path}{field_subresource.url_path or field_subresource.field_name}/"
+        )
+        methods = ", ".join(method.upper() for method in field_subresource.methods)
+        lines.append(f"- `{methods} {action_path}`: field `{field_subresource.field_name}`")
     return lines
 
 
@@ -283,6 +294,44 @@ def custom_action_lines(factory: CRUDFactory[Any, Any, Any, Any, Any]) -> list[s
         lines.extend(
             indent_lines(dataclass_section_lines(custom_action.response_dataclass))
         )
+        lines.append("")
+    return trim_trailing_blank(lines)
+
+
+def field_subresource_lines(
+    factory: CRUDFactory[Any, Any, Any, Any, Any],
+    *,
+    base_path: str,
+) -> list[str]:
+    """Describe generated single-field detail endpoints."""
+    if not getattr(factory, "field_subresources", ()):
+        return ["No field subresource endpoints are declared."]
+    detail_path = join_route(base_path, factory.route)
+    detail_path = f"{detail_path}{{{factory.lookup_url_kwarg or factory.lookup_field}}}/"
+    lines: list[str] = []
+    for field_subresource in factory.field_subresources:
+        action_path = (
+            f"{detail_path}{field_subresource.url_path or field_subresource.field_name}/"
+        )
+        methods = ", ".join(method.upper() for method in field_subresource.methods)
+        payload_label = field_subresource_payload_label(
+            model=factory.model,
+            field_name=field_subresource.field_name,
+        )
+        lines.append(f"### `{field_subresource.field_name}`")
+        lines.append("")
+        lines.append(f"- Route: `{methods} {action_path}`")
+        lines.append(f"- Raw payload type: `{payload_label}`")
+        if "patch" in field_subresource.methods:
+            lines.append(f"- PATCH mode: `{field_subresource.patch_mode}`")
+        if field_subresource.read_acl is not None:
+            lines.append(
+                f"- Read ACL permission: `{field_subresource.read_acl.permission}`"
+            )
+        if field_subresource.patch_acl is not None:
+            lines.append(
+                f"- Patch ACL permission: `{field_subresource.patch_acl.permission}`"
+            )
         lines.append("")
     return trim_trailing_blank(lines)
 

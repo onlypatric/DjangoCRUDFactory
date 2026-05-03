@@ -6,7 +6,17 @@ from decimal import Decimal
 
 from django.db import models
 
-from crudfactory import CRUDFactory, count_stat, filterable, length, model_field, orderable, regex, sum_stat
+from crudfactory import (
+    CRUDFactory,
+    count_stat,
+    field_subresource,
+    filterable,
+    length,
+    model_field,
+    orderable,
+    regex,
+    sum_stat,
+)
 
 from ..models import Location
 
@@ -304,6 +314,12 @@ location_factory = CRUDFactory(
     create_input=LocationCreateDTO,
     update_input=LocationUpdateDTO,
     partial_update_input=LocationPatchDTO,
+    field_subresources=[
+        field_subresource(
+            field_name="metadata",
+            patch_mode="merge",
+        )
+    ],
     queryset=LOCATION_QUERYSET,
     app_name="inventory",
     route="locations",

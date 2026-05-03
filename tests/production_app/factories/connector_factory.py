@@ -13,6 +13,7 @@ from crudfactory import (
     DjangoACLBackend,
     crud_acl,
     detail_action,
+    field_subresource,
     filterable,
     length,
     model_field,
@@ -311,6 +312,14 @@ connector_factory = CRUDFactory(
     update_input=ConnectorUpdateDTO,
     partial_update_input=ConnectorPatchDTO,
     queryset=CONNECTOR_QUERYSET,
+    field_subresources=[
+        field_subresource(
+            field_name="metadata",
+            patch_mode="merge",
+            read_permission="app.connector.read",
+            update_permission="app.connector.update",
+        )
+    ],
     custom_actions=[
         detail_action(
             name="start",

@@ -17,6 +17,7 @@ from .dataclass_serializers import (
     validate_partial_update_dataclass,
     validate_supported_dataclass_fields,
 )
+from .field_subresources import FieldSubresourceSpec, validate_field_subresources
 from .schema import validate_supported_response_dataclass_fields
 from .source_queries import (
     source_filter_specs_from_dataclass,
@@ -48,6 +49,7 @@ def validate_factory_configuration(
     update_handler: UpdateHandler[M, UpdateDTO] | None,
     partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
     nested_writes: tuple[NestedWriteSpec, ...],
+    field_subresources: tuple[FieldSubresourceSpec, ...],
     custom_actions: tuple[CustomActionSpec[M], ...],
     grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
     acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None,
@@ -68,6 +70,11 @@ def validate_factory_configuration(
     validate_custom_actions(custom_actions)
     validate_grouped_actions(grouped_actions)
     validate_acl_configuration(acl, custom_actions, grouped_actions)
+    validate_field_subresources(
+        model=model,
+        field_subresources=field_subresources,
+        read_only=read_only,
+    )
     validate_non_empty_string("app_name", app_name)
     validate_non_empty_string("route", route)
     validate_non_empty_string("basename", basename)

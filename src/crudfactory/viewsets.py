@@ -26,6 +26,13 @@ from .acl import ACLActionConfig, ACLConfig
 from .actions import CustomActionSpec, GroupedCollectionActionSpec
 from .dataclass_serializers import build_serializer_from_dataclass
 from .filters import FilterSpec, apply_filter_specs, response_dataclass_from_mapper
+from .field_subresources import (
+    FieldSubresourceSpec,
+    apply_field_subresource_patch,
+    field_subresource_payload_label,
+    read_field_payload,
+    validated_field_payload,
+)
 from .inputs import serializer_to_dataclass
 from .ordering import OrderSpec, apply_order_specs
 from .response import dataclass_instance_to_response_data, map_instance_to_response_data
@@ -70,6 +77,7 @@ def build_crud_viewset_class(
     partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
     custom_actions: tuple[CustomActionSpec[M], ...],
     grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
+    field_subresources: tuple[FieldSubresourceSpec, ...],
     acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None,
     read_only: bool,
     queryset: models.QuerySet[M] | None,
@@ -125,6 +133,7 @@ def build_crud_viewset_class(
         custom_action_response_serializers=custom_action_response_serializers,
         grouped_action_serializers=grouped_action_serializers,
         response_serializer=response_serializer,
+        field_subresources=field_subresources,
         queryset=queryset,
         lookup_field=lookup_field,
         lookup_url_kwarg=lookup_url_kwarg,
@@ -147,6 +156,7 @@ def build_crud_viewset_class(
         grouped_actions=grouped_actions,
         grouped_action_serializers=grouped_action_serializers,
         grouped_action_response_serializers=grouped_action_response_serializers,
+        field_subresources=field_subresources,
     )
     apply_optional_viewset_attributes(
         viewset_class,
@@ -282,6 +292,7 @@ def create_viewset_class(
     partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None,
     custom_actions: tuple[CustomActionSpec[M], ...],
     grouped_actions: tuple[GroupedCollectionActionSpec[M], ...],
+    field_subresources: tuple[FieldSubresourceSpec, ...],
     acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None,
     read_only: bool,
     serializers_by_action: dict[str, type[serializers.Serializer]],
@@ -480,6 +491,13 @@ def create_viewset_class(
         grouped_action_serializers=grouped_action_serializers,
         acl=acl,
     )
+    attach_field_subresources(
+        viewset_class=GeneratedCRUDViewSet,
+        model=model,
+        field_subresources=field_subresources,
+        acl=acl,
+        read_only=read_only,
+    )
     name_generated_viewset(GeneratedCRUDViewSet, model)
     return GeneratedCRUDViewSet
 
@@ -516,6 +534,25 @@ def attach_grouped_collection_actions(
             acl=acl,
         )
         setattr(viewset_class, grouped_action.name, action_method)
+
+
+def attach_field_subresources(
+    *,
+    viewset_class: type[ModelViewSet],
+    model: type[M],
+    field_subresources: tuple[FieldSubresourceSpec, ...],
+    acl: ACLConfig[M, Any, Any, Any] | None,
+    read_only: bool,
+) -> None:
+    """Attach generated single-field detail endpoints to the ViewSet class."""
+    for field_subresource in field_subresources:
+        action_method = build_field_subresource_method(
+            model=model,
+            field_subresource=field_subresource,
+            acl=acl,
+            read_only=read_only,
+        )
+        setattr(viewset_class, field_subresource.field_name, action_method)
 
 
 def build_custom_action_method(
@@ -616,6 +653,68 @@ def build_grouped_collection_action_method(
         url_path=grouped_action.url_path,
         url_name=grouped_action.url_name,
     )(grouped_collection_action_method)
+
+
+def build_field_subresource_method(
+    *,
+    model: type[M],
+    field_subresource: FieldSubresourceSpec,
+    acl: ACLConfig[M, Any, Any, Any] | None,
+    read_only: bool,
+) -> Callable[..., Response]:
+    """Build one generated detail endpoint over a single model field."""
+
+    def field_subresource_method(
+        self: ModelViewSet,
+        request: Request,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Response:
+        instance = cast(M, self.get_object())
+        request_method = (request.method or "").upper()
+        if request_method == "GET":
+            enforce_instance_acl(
+                request=request,
+                acl=acl,
+                action_config=field_subresource.read_acl,
+                instance=instance,
+                resolver=resource_ref_from_instance(acl),
+            )
+            return Response(read_field_payload(instance, field_subresource.field_name))
+
+        ensure_writes_are_allowed(read_only, "PATCH")
+        enforce_instance_acl(
+            request=request,
+            acl=acl,
+            action_config=field_subresource.patch_acl,
+            instance=instance,
+            resolver=resource_ref_from_instance(acl),
+        )
+        payload = validated_field_payload(
+            model=model,
+            field_name=field_subresource.field_name,
+            payload=request.data,
+        )
+        updated_value = apply_field_subresource_patch(
+            instance=instance,
+            field_name=field_subresource.field_name,
+            patch_mode=field_subresource.patch_mode,
+            payload=payload,
+        )
+        return Response(updated_value)
+
+    field_subresource_method.__name__ = field_subresource.field_name
+    field_subresource_method.__qualname__ = field_subresource.field_name
+    field_subresource_method.__doc__ = (
+        f"Generated field subresource endpoint for `{field_subresource.field_name}` "
+        f"({field_subresource_payload_label(model=model, field_name=field_subresource.field_name)})."
+    )
+    return action(
+        detail=True,
+        methods=cast(Any, list(field_subresource.methods)),
+        url_path=field_subresource.url_path or field_subresource.field_name,
+        url_name=field_subresource.url_name,
+    )(field_subresource_method)
 
 
 def http_method_names_for_mode(read_only: bool) -> list[str]:

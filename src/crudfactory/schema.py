@@ -17,6 +17,7 @@ from .dataclass_serializers import (
     first_type_argument_or_any,
     unwrap_optional_type,
 )
+from .field_subresources import FieldSubresourceSpec, direct_model_field
 from .filters import FilterSpec
 from .ordering import ORDERING_QUERY_PARAM, OrderSpec
 from .source_queries import (
@@ -192,6 +193,7 @@ def apply_schema_metadata(
     grouped_actions: tuple[Any, ...] = (),
     grouped_action_serializers: dict[str, type[serializers.Serializer]] | None = None,
     grouped_action_response_serializers: dict[str, type[serializers.Serializer]] | None = None,
+    field_subresources: tuple[FieldSubresourceSpec, ...] = (),
 ) -> None:
     """Attach serializer metadata useful to DRF and optional schema tools."""
     setattr(viewset_class, "response_serializer_class", response_serializer)
@@ -220,6 +222,7 @@ def apply_schema_metadata(
         grouped_actions=grouped_actions,
         grouped_action_serializers=grouped_action_serializers or {},
         grouped_action_response_serializers=grouped_action_response_serializers or {},
+        field_subresources=field_subresources,
     )
 
 
@@ -256,6 +259,7 @@ def apply_drf_spectacular_metadata(
     grouped_actions: tuple[Any, ...],
     grouped_action_serializers: dict[str, type[serializers.Serializer]],
     grouped_action_response_serializers: dict[str, type[serializers.Serializer]],
+    field_subresources: tuple[FieldSubresourceSpec, ...],
 ) -> None:
     """Decorate generated actions when drf-spectacular is installed.
 
@@ -294,6 +298,12 @@ def apply_drf_spectacular_metadata(
             OpenApiParameter=OpenApiParameter,
             extend_schema=extend_schema,
         )
+        decorate_field_subresources(
+            viewset_class=viewset_class,
+            model=model,
+            field_subresources=field_subresources,
+            extend_schema=extend_schema,
+        )
         return
 
     viewset_class.create = extend_schema(
@@ -319,6 +329,12 @@ def apply_drf_spectacular_metadata(
         grouped_actions=grouped_actions,
         grouped_action_response_serializers=grouped_action_response_serializers,
         OpenApiParameter=OpenApiParameter,
+        extend_schema=extend_schema,
+    )
+    decorate_field_subresources(
+        viewset_class=viewset_class,
+        model=model,
+        field_subresources=field_subresources,
         extend_schema=extend_schema,
     )
 
@@ -366,6 +382,30 @@ def decorate_grouped_actions(
                     OpenApiParameter=OpenApiParameter,
                 ),
                 responses=response_serializer,
+            )(action_method),
+        )
+
+
+def decorate_field_subresources(
+    *,
+    viewset_class: type[ModelViewSet],
+    model: type[models.Model],
+    field_subresources: tuple[FieldSubresourceSpec, ...],
+    extend_schema: Any,
+) -> None:
+    """Decorate generated field endpoints with raw payload request/response schemas."""
+    for field_subresource in field_subresources:
+        action_method = getattr(viewset_class, field_subresource.field_name)
+        request_type = openapi_field_payload_type(model=model, field_name=field_subresource.field_name)
+        responses: dict[int, Any] = {200: request_type}
+        request_schema: Any = request_type if "patch" in field_subresource.methods else None
+        setattr(
+            viewset_class,
+            field_subresource.field_name,
+            extend_schema(
+                request=request_schema,
+                responses=responses,
+                description=field_subresource_description(field_subresource),
             )(action_method),
         )
 
@@ -471,6 +511,41 @@ def openapi_query_type(field_type: Any) -> Any:
     if inner_type in (str, int, float, bool, dt.date, dt.datetime, Decimal, UUID):
         return inner_type
     return str
+
+
+def openapi_field_payload_type(
+    *,
+    model: type[models.Model],
+    field_name: str,
+) -> Any:
+    """Return a simple OpenAPI payload type for one direct model field."""
+    try:
+        from drf_spectacular.types import OpenApiTypes
+    except ImportError:
+        OpenApiTypes = None
+
+    django_field = direct_model_field(model, field_name)
+    if isinstance(django_field, models.JSONField):
+        return OpenApiTypes.OBJECT if OpenApiTypes is not None else dict[str, Any]
+    if isinstance(django_field, (models.CharField, models.TextField)):
+        return str
+    if isinstance(django_field, models.BooleanField):
+        return bool
+    if isinstance(django_field, models.IntegerField):
+        return int
+    if isinstance(django_field, (models.DecimalField, models.FloatField)):
+        return float
+    return str
+
+
+def field_subresource_description(field_subresource: FieldSubresourceSpec) -> str:
+    """Return a small schema description for one field endpoint."""
+    if "patch" in field_subresource.methods:
+        return (
+            f"Read or patch the `{field_subresource.field_name}` field directly. "
+            f"PATCH uses `{field_subresource.patch_mode}` semantics."
+        )
+    return f"Read the `{field_subresource.field_name}` field directly."
 
 
 def is_required_dataclass_field(dataclass_field: Field[Any]) -> bool:

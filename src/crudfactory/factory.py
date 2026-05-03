@@ -14,6 +14,10 @@ from .acl import ACLConfig
 from .actions import CustomActionSpec, GroupedCollectionActionSpec
 from ._auto_response import build_auto_response_mapper, build_declared_response_mapper
 from .filters import FilterSpec, filter_specs_from_response_mapper
+from .field_subresources import (
+    FieldSubresourceSpec,
+    normalize_field_subresources,
+)
 from .ordering import OrderSpec, order_specs_from_response_mapper
 from .markdown_docs import render_factory_markdown
 from ._nested_writes import (
@@ -78,6 +82,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         partial_update_handler: PartialUpdateHandler[M, PatchDTO] | None = None,
         writable_fields: Sequence[str] | None = None,
         nested_writes: Sequence[NestedWriteSpec] | None = None,
+        field_subresources: Sequence[FieldSubresourceSpec] | None = None,
         custom_actions: Sequence[CustomActionSpec[M]] | None = None,
         grouped_actions: Sequence[GroupedCollectionActionSpec[M]] | None = None,
         acl: ACLConfig[M, CreateDTO, UpdateDTO, PatchDTO] | None = None,
@@ -108,6 +113,9 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         )
         self.nested_writes: tuple[NestedWriteSpec, ...] = normalize_nested_writes(
             nested_writes
+        )
+        self.field_subresources: tuple[FieldSubresourceSpec, ...] = (
+            normalize_field_subresources(field_subresources)
         )
         self.create_handler = resolve_create_handler(
             model=model,
@@ -178,6 +186,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             update_handler=self.update_handler,
             partial_update_handler=self.partial_update_handler,
             nested_writes=self.nested_writes,
+            field_subresources=self.field_subresources,
             custom_actions=self.custom_actions,
             grouped_actions=self.grouped_actions,
             acl=self.acl,
@@ -200,6 +209,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             partial_update_handler=self.partial_update_handler,
             custom_actions=self.custom_actions,
             grouped_actions=self.grouped_actions,
+            field_subresources=self.field_subresources,
             acl=self.acl,
             read_only=self.is_read_only,
             queryset=self.queryset,
@@ -231,6 +241,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
         pagination_class: type[BasePagination] | None = None,
         custom_actions: Sequence[CustomActionSpec[M]] | None = None,
         grouped_actions: Sequence[GroupedCollectionActionSpec[M]] | None = None,
+        field_subresources: Sequence[FieldSubresourceSpec] | None = None,
         acl: ACLConfig[M, object, object, object] | None = None,
     ) -> CRUDFactory[M, object, object, object, ResponseDTO]:
         """Return a factory that exposes only list and retrieve endpoints."""
@@ -250,6 +261,7 @@ class CRUDFactory(Generic[M, CreateDTO, UpdateDTO, PatchDTO, ResponseDTO]):
             pagination_class=pagination_class,
             custom_actions=custom_actions,
             grouped_actions=grouped_actions,
+            field_subresources=field_subresources,
             acl=acl,
         )
 

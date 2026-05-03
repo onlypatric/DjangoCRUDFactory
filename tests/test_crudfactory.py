@@ -50,6 +50,7 @@ from crudfactory import (
     choices,
     grouped_collection_action,
     count_stat,
+    field_subresource,
     filterable,
     length,
     max_stat,
@@ -72,6 +73,7 @@ class Widget(models.Model):
     name = models.CharField(max_length=50)
     count = models.IntegerField(default=0)
     secret = models.CharField(max_length=50, default="")
+    metadata = models.JSONField(default=dict, blank=True)
 
     class Meta:
         app_label = "tests"
@@ -916,6 +918,80 @@ class CRUDFactoryTests(unittest.TestCase):
         self.assertIn('  "detail": "Locked connectors cannot be started."', markdown)
         self.assertIn("Filterable: `name`", markdown)
         self.assertIn("Orderable: `count`", markdown)
+
+    def test_field_subresource_get_returns_raw_field_payload(self) -> None:
+        widget = Widget.objects.create(
+            name="alpha",
+            count=1,
+            metadata={"source": "seed", "enabled": True},
+        )
+        view = self.build_factory(
+            field_subresources=[
+                field_subresource(
+                    field_name="metadata",
+                    patch_mode="merge",
+                )
+            ]
+        ).get_viewset_class().as_view({"get": "metadata"})
+
+        response = view(self.request_factory.get(f"/widgets/{widget.pk}/metadata/"), pk=widget.pk)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, {"source": "seed", "enabled": True})
+
+    def test_field_subresource_patch_merge_updates_only_target_field(self) -> None:
+        widget = Widget.objects.create(
+            name="alpha",
+            count=1,
+            secret="keep-secret",
+            metadata={"source": "seed", "enabled": True},
+        )
+        view = self.build_factory(
+            field_subresources=[
+                field_subresource(
+                    field_name="metadata",
+                    patch_mode="merge",
+                )
+            ]
+        ).get_viewset_class().as_view({"patch": "metadata"})
+
+        response = view(
+            self.request_factory.patch(
+                f"/widgets/{widget.pk}/metadata/",
+                {"enabled": False, "note": "patched"},
+                format="json",
+            ),
+            pk=widget.pk,
+        )
+
+        widget.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data,
+            {"source": "seed", "enabled": False, "note": "patched"},
+        )
+        self.assertEqual(widget.name, "alpha")
+        self.assertEqual(widget.secret, "keep-secret")
+
+    def test_field_subresource_markdown_docs_include_endpoint_contract(self) -> None:
+        markdown = self.build_factory(
+            route="widgets",
+            basename="widget",
+            field_subresources=[
+                field_subresource(
+                    field_name="metadata",
+                    patch_mode="merge",
+                )
+            ],
+        ).render_markdown_docs(
+            title="Widget Factory",
+            base_path="/api",
+        )
+
+        self.assertIn("## Field Subresource Endpoints", markdown)
+        self.assertIn("`GET, PATCH /api/widgets/{pk}/metadata/`", markdown)
+        self.assertIn("Raw payload type: `JSON object`", markdown)
+        self.assertIn("PATCH mode: `merge`", markdown)
 
     def test_nested_create_writes_related_children(self) -> None:
         view = self.build_nested_factory().get_viewset_class().as_view({"post": "create"})

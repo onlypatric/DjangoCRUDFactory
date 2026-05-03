@@ -339,6 +339,29 @@ class EVInfrastructureCRUDIntegrationTests(TestCase):
         self.assertEqual(patch_response.data["city"], "Turin")
         self.assertEqual(delete_response.status_code, 204)
 
+    def test_location_metadata_field_endpoint_reads_and_merges_json(self) -> None:
+        location = self.create_location(name="Metadata Hub")
+
+        get_response = self.client.get(
+            f"/api/locations/{location.pk}/metadata/",
+            format="json",
+        )
+        patch_response = self.client.patch(
+            f"/api/locations/{location.pk}/metadata/",
+            {"ui_color": "blue", "source": "patched"},
+            format="json",
+        )
+
+        location.refresh_from_db()
+        self.assertEqual(get_response.status_code, 200)
+        self.assertEqual(get_response.data, {"source": "test"})
+        self.assertEqual(patch_response.status_code, 200)
+        self.assertEqual(
+            patch_response.data,
+            {"source": "patched", "ui_color": "blue"},
+        )
+        self.assertEqual(location.metadata, {"source": "patched", "ui_color": "blue"})
+
     def test_chargepoint_returns_related_connectors_and_allows_name_patch(self) -> None:
         location = self.create_location(name="Naples Hub")
         create_response = self.client.post(
@@ -723,6 +746,43 @@ class ConnectorACLIntegrationTests(TestCase):
         self.assertEqual(stop_response.status_code, 200)
         self.assertEqual(denied_response.status_code, 404)
 
+    def test_connector_metadata_field_endpoint_requires_read_and_update_permissions(self) -> None:
+        connector = self.create_connector_fixture(
+            connector_name="Metadata Connector",
+            serial_number="ACL-CP-05",
+        )
+        self.grant(self.operator, "app.connector.read", connector)
+        self.grant(self.operator, "app.connector.update", connector)
+
+        self.client.force_authenticate(user=self.operator)
+        get_response = self.client.get(
+            f"/api/connectors/{connector.pk}/metadata/",
+            format="json",
+        )
+        patch_response = self.client.patch(
+            f"/api/connectors/{connector.pk}/metadata/",
+            {"source": "patched", "visible": True},
+            format="json",
+        )
+
+        self.client.force_authenticate(user=self.reader)
+        denied_response = self.client.patch(
+            f"/api/connectors/{connector.pk}/metadata/",
+            {"source": "reader"},
+            format="json",
+        )
+
+        connector.refresh_from_db()
+        self.assertEqual(get_response.status_code, 200)
+        self.assertEqual(get_response.data, {"source": "acl-fixture"})
+        self.assertEqual(patch_response.status_code, 200)
+        self.assertEqual(
+            patch_response.data,
+            {"source": "patched", "visible": True},
+        )
+        self.assertEqual(connector.metadata, {"source": "patched", "visible": True})
+        self.assertEqual(denied_response.status_code, 404)
+
 
 class MonitoringGroupedActionIntegrationTests(TestCase):
     client: APIClient
@@ -913,4 +973,6 @@ class FactoryDocsServerTests(TestCase):
         self.assertIn("## Endpoints", body)
         self.assertIn("## Request DTOs", body)
         self.assertIn("## Response DTO", body)
+        self.assertIn("## Field Subresource Endpoints", body)
+        self.assertIn("`GET, PATCH /api/connectors/{pk}/metadata/`", body)
         self.assertIn("ConnectorActionInputDTO", body)
